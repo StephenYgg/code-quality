@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-quality.local/schemas/run.schema.json",
+  "title": "Code Quality Run Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "input",
+    "policyHash",
+    "gate",
+    "findingIds",
+    "timestamps"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "id": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope", "repository", "head", "contentHash"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "worktree",
+            "staged",
+            "commit",
+            "range",
+            "repository",
+            "github_pr",
+            "gitlab_mr"
+          ]
+        },
+        "scope": {
+          "enum": ["change", "affected_surface", "repository", "focused_domain"]
+        },
+        "repository": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "comparisonBase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "head": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "policyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "gate": { "enum": ["PASS", "WARN", "BLOCK", "INCOMPLETE"] },
+    "findingIds": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modelId",
+        "modelVersion",
+        "normalizedTenths",
+        "coverageTenths"
+      ],
+      "properties": {
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "modelVersion": { "type": "integer", "minimum": 1 },
+        "normalizedTenths": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "coverageTenths": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt"],
+      "properties": {
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "completedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+    }
+  }
+}

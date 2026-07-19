@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-quality.local/schemas/score-model.schema.json",
+  "title": "Code Quality Score Model",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "version",
+    "ruleVersions",
+    "roundingMode",
+    "majors"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "id": { "$ref": "#/$defs/id" },
+    "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "profileHash": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "ruleVersions": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 256,
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "roundingMode": { "const": "half_up" },
+    "majors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/major" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{1,127}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 300,
+      "pattern": "\\S"
+    },
+    "weight": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "minor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "weightTenths",
+        "required",
+        "domainVocabulary",
+        "ratingAnchors"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/name" },
+        "weightTenths": { "$ref": "#/$defs/weight" },
+        "required": { "type": "boolean" },
+        "domainVocabulary": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 160,
+            "pattern": "\\S"
+          }
+        },
+        "ratingAnchors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["0.0", "1.0", "2.0", "3.0", "4.0", "5.0"],
+          "properties": {
+            "0.0": { "$ref": "#/$defs/anchorText" },
+            "1.0": { "$ref": "#/$defs/anchorText" },
+            "2.0": { "$ref": "#/$defs/anchorText" },
+            "3.0": { "$ref": "#/$defs/anchorText" },
+            "4.0": { "$ref": "#/$defs/anchorText" },
+            "5.0": { "$ref": "#/$defs/anchorText" }
+          }
+        }
+      }
+    },
+    "anchorText": {
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 2000,
+      "pattern": "\\S"
+    },
+    "major": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "weightTenths", "minors"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/name" },
+        "weightTenths": { "$ref": "#/$defs/weight" },
+        "minors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 125,
+          "items": { "$ref": "#/$defs/minor" }
+        }
+      }
+    }
+  }
+}

@@ -9,6 +9,8 @@ export default tseslint.config(
       "dist/**",
       "node_modules/**",
       "pnpm-lock.yaml",
+      "scripts/**",
+      "tests/fixtures/**",
     ],
   },
   eslint.configs.recommended,

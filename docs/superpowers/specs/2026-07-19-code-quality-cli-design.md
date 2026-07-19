@@ -1,6 +1,6 @@
 # Code Quality CLI Design
 
-Status: Approved design; first `cq validate` / `CQ-AGENT-001` slice implemented
+Status: Approved design; deterministic policy, scoring, readability, and validation foundation implemented
 
 Date: 2026-07-19
 
@@ -253,13 +253,15 @@ locations. Semantic similarity without deterministic proof remains a review
 candidate rather than an automatic violation. The rule begins in warning mode
 for existing repositories and can be ratcheted to blocking after a baseline.
 
-Current implementation note: the first runnable slice implements only the
-bounded, read-only `CQ-AGENT-001` portion with terminal and JSON output. Schema,
-profile, waiver, provider, and general policy validation in this paragraph are
-still planned. The current parser also rejects instruction sources above 10,000
-lines or 50,000 Markdown syntax markers before AST construction and stops AST
-traversal above 20,000 nodes; these conditions produce an explicit incomplete
-result.
+Current implementation note: `cq validate` now combines bounded, read-only
+`CQ-AGENT-001` checks with schema, profile, rule-pack, provider-selection, and
+waiver validation. `cq rules list/explain`, single-file TypeScript/JavaScript
+`cq inspect readability`, and assessment-driven `cq score` are also runnable.
+Model-backed finding confirmation, normalized Git/forge inputs, and full review
+orchestration remain planned. The instruction parser rejects sources above
+10,000 lines or 50,000 Markdown syntax markers before AST construction and
+stops AST traversal above 20,000 nodes; these conditions produce an explicit
+incomplete result.
 
 `cq integrations plan` is read-only and shows the exact managed snippets,
 Skill locations, and files that an installation would affect. Installation and

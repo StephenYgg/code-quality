@@ -1,0 +1,11 @@
+# Inactive template. Enable only after ops approval and least-privilege runners.
+code-quality:
+  image: node:22
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - corepack enable
+    - corepack pnpm install --frozen-lockfile
+    - corepack pnpm check
+    - corepack pnpm run check:secrets

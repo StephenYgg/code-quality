@@ -1,0 +1,27 @@
+schemaVersion: "1"
+id: default
+version: 1
+rulePacks:
+  - builtin:universal
+dataClassification: internal
+budgets:
+  maxFiles: 200
+  maxChangedLines: 10000
+  maxDiffBytes: 2097152
+  maxStages: 7
+  maxProviderConcurrency: 2
+  maxProviderAttempts: 16
+  maxTokens: 500000
+  timeoutSeconds: 900
+  maxCostUsd: 25
+gate:
+  mode: block
+  blockSeverity: P2
+  minimumConfidence: high
+waiverLocations:
+  - .code-quality/waivers
+scoreModel:
+  id: cq-default-100
+peerAgentDocuments:
+  - CLAUDE.md
+  - GEMINI.md

@@ -79,7 +79,7 @@ check:secrets
 
 ## 本项目当前状态
 
-截至 2026-07-19，本仓库已实现 TypeScript/pnpm 包、自动化单元/集成测试，以及 `cq validate [repository]` 的 `CQ-AGENT-001` 首个可执行版本。当前 CLI 只覆盖同级 Agent 文档复用验证；模型审查、其他规则、profile/schema、评分、七种 review input（worktree、staged、commit、range、full repository、PR、MR）、Provider、Forge、Skill、integration installer、Git Hook、发布和 CI workflow 仍未实现。
+截至 2026-07-19，本仓库已实现 TypeScript/pnpm 包、自动化单元/集成测试、严格 policy/schema/profile/waiver 解析、100.0 分评分引擎、TypeScript/JavaScript AST 可读性分析，以及 `validate`、`rules`、`inspect readability`、`score` 的确定性 CLI。模型审查、七种 review input（worktree、staged、commit、range、full repository、PR、MR）、Provider、Forge、Skill、integration installer、Git Hook、发布和 CI workflow 仍未实现。
 
 ## 当前可用的 TypeScript、pnpm 与 cq 验证
 
@@ -101,17 +101,21 @@ pnpm check
 
 ```text
 cq validate [repository]
+cq rules list [--profile <name>]
+cq rules explain <rule-id> [--profile <name>]
+cq inspect readability <typescript-or-javascript-file>
+cq score <assessment.json>
 ```
 
-在尚未全局安装二进制时，等价命令是 `node dist/cli.js validate [repository]`。当前 `validate` 不调用模型，只执行 `CQ-AGENT-001` 的目录作用域、canonical pointer、孤立 peer、精确重复段落、明确冲突、引用环和资源边界检查。资源边界包括目录、条目、文件、字节、诊断，以及 Markdown 解析前 10,000 行/50,000 个语法标记和解析后 20,000 个 AST 节点的固定上限；超限不能静默返回 PASS。下列命令仍处于规划阶段：
+在尚未全局安装二进制时，等价入口是 `node dist/cli.js`。当前这些命令都不调用模型、不执行目标代码、不写目标仓库。`validate` 聚合 `CQ-AGENT-001` 与有效 policy/schema/profile/rule/waiver 校验；`inspect readability` 只产生确定性候选并明确把语义评分标为 `not_assessed`；`score` 只计算调用者提供且通过边界校验的 assessment，不自行声称完成代码审查。资源、竞态或平台能力导致证据不完整时返回 exit 3，而不是静默 PASS。
+
+下列命令仍处于规划阶段：
 
 ```text
-cq inspect readability <input>
-cq score <input>
 cq review <input>
 ```
 
-后续设计会把 `cq validate` 扩展到 schema、rule ID、waiver 过期、profile override、provider 配置和全部 instruction source。远程变更的 `--run-checks` 仍是与只读审查分离的规划能力，安全约束见 [目标代码执行](security.md#目标代码执行)。
+远程变更的 `--run-checks` 仍是与只读审查分离的规划能力，安全约束见 [目标代码执行](security.md#目标代码执行)。
 
 ## 规划中的跨仓库触发分层
 
@@ -119,7 +123,7 @@ cq review <input>
 
 1. **Agent 指令触发层**：全局或仓库 Agent 指令只识别审查时机、授权边界和路由，不复制机器政策。
 2. **Skill 调用层**：Codex/Claude Code Skill 调用 CLI、解释状态并请求必要授权；普通审查不得安装或更新用户 Skill。
-3. **CLI 执行层**：当前 `cq validate` 已提供有界的只读确定性检查；后续 `cq` 还将负责不可变输入、有效政策、受限 AI 审查、finding 验证和报告。默认不修改目标代码、Git 状态或外部系统。
+3. **CLI 执行层**：当前 `cq validate/rules/inspect/score` 已提供有界的只读确定性检查与计算；后续 `cq` 还将负责不可变输入、受限 AI 审查、finding 验证和报告。默认不修改目标代码、Git 状态或外部系统。
 4. **项目 profile 配置层**：`.code-quality/profile.yaml` 选择规则集、质量命令、风险触发、受信 provider 名称和资源预算。它不能保存 secret、定义凭据 header、重定向 endpoint，或让待审查 head 激活新命令。
 5. **Git Hook 兜底层**：用户显式安装后，pre-commit/pre-push 调用同一 CLI 和 profile。Hook 不拥有另一套规则，不能取代服务端 required check，也不能自动安装。
 

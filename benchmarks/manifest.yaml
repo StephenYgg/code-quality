@@ -1,0 +1,8 @@
+schemaVersion: 1
+cases:
+  - id: readability-large-function
+    domain: readability
+    expectedFindingIds: [CQ-READ-001]
+  - id: clean-small-module
+    domain: readability
+    expectedFindingIds: []

@@ -17,11 +17,22 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "profiles",
+    "rules",
+    "schemas",
+    "skills",
+    "templates",
+    "benchmarks",
+    "scripts",
+    "src",
+    "README.md",
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build",
+    "check:dependencies": "node ./scripts/check-dependencies.mjs",
+    "check:secrets": "node ./scripts/check-secrets.mjs",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"*.{json,js}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"*.{json,js}\"",
     "lint": "eslint .",
@@ -31,8 +42,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "commander": "^14.0.2",
-    "mdast-util-from-markdown": "^2.0.2"
+    "mdast-util-from-markdown": "^2.0.2",
+    "typescript": "^5.9.3",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -40,7 +54,6 @@
     "@types/node": "^24.10.1",
     "eslint": "^9.39.1",
     "prettier": "^3.6.2",
-    "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.0",
     "vitest": "^4.0.14"
   }

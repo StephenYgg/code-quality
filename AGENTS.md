@@ -109,12 +109,15 @@
 
 ### 3.1 当前实现状态
 
-- 当前仓库处于规范与首版 CLI 建设阶段。
-- 已实现首个 TypeScript CLI 增量：本地构建后的 `cq validate [repository]` 执行只读、确定性的 `CQ-AGENT-001` 校验，并支持 terminal/JSON 输出。
-- `format:check`、`lint`、`typecheck`、`test`、`test:unit`、`test:integration`、`build` 和 `check` 已有实际 pnpm 脚本。
-- Provider、Forge、七种 review input（worktree、staged、commit、range、full repository、PR、MR）、评分、Hook、Codex/Claude Code Skill、integration installer、schema/profile/waiver、发布和 CI 仍属于已确认但尚未实现的设计。
-- 在对应命令实际存在并通过验证前，不得把规划中的 `cq` 或 `pnpm` 命令描述为已可用能力。
-- 除 `CQ-AGENT-001` 外，当前审查仍按本文件和路由文档人工执行。
+- 首版 CLI 主干已可运行并通过 `pnpm check`。
+- 确定性能力：`cq validate`、`cq rules list/explain`、`cq inspect readability`、`cq score`。
+- Git 输入：worktree/staged/commit/range 不可变快照；`cq review --repository --preflight` 与 `--confirm-full-repository <hash>`。
+- Provider 适配器：Codex CLI、Claude CLI、OpenAI-compatible、Anthropic-compatible（本地 fake CLI 与 loopback HTTP 测试）。
+- Review 编排：强制 stage、最多 7 stage、2 并发、finding 生命周期、gate、run 存储与 `cq report`/`cq runs`。
+- Forge：GitHub PR / GitLab MR URL 解析与只读 metadata 读取；publication helper 已有，完整线上发布仍需 harden。
+- 交付资产：`skills/code-quality-review`、hooks 安装/卸载、`templates/ci` 非激活模板、`check:secrets`/`check:dependencies`。
+- `CQ-READ-001..008` 仍主要产生确定性候选；模型候选必须经 verifier 才能 confirmed/BLOCK。
+- 不得把未实际存在的命令描述为可用能力；当前 README 与本段同步维护。
 
 ### 3.2 目标职责边界
 

@@ -1,0 +1,231 @@
+schemaVersion: "1"
+id: universal
+version: 1
+rules:
+  - id: CQ-READ-001
+    version: 1
+    title: Oversized function with mixed responsibilities
+    rationale: A function that owns unrelated business phases is difficult to understand, change, and verify safely.
+    scope: readability
+    triggers: [source_change, oversized_function]
+    defaultSeverity: P2
+    gateMode: block
+    detection: hybrid
+    requiredEvidence: [source range, responsibility assessment, metric delta]
+    remediation: Separate coherent business phases without creating pass-through fragments.
+    verification: Run behavior tests for each extracted phase and compare hotspot metrics.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-002
+    version: 1
+    title: Oversized or growing hotspot file
+    rationale: Files with multiple independent change reasons increase ownership ambiguity and regression risk.
+    scope: readability
+    triggers: [source_change, hotspot_file]
+    defaultSeverity: P2
+    gateMode: block
+    detection: hybrid
+    requiredEvidence: [file range, ownership analysis, metric delta]
+    remediation: Extract modules around stable business ownership and interfaces.
+    verification: Confirm changed responsibilities are independently understandable and tested.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-003
+    version: 1
+    title: Try boundary spans unrelated business phases
+    rationale: A distant catch loses operation-specific failure meaning and obscures partial-success boundaries.
+    scope: readability
+    triggers: [source_change, wide_try]
+    defaultSeverity: P2
+    gateMode: block
+    detection: hybrid
+    requiredEvidence: [try range, covered operations, error mapping]
+    remediation: Bound each catch to one operation or one coherent phase and preserve typed errors.
+    verification: Exercise phase-specific failures, cleanup, compensation, and partial success.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-004
+    version: 1
+    title: Conditional and fallback precedence is hidden
+    rationale: Nested conditionals and semantic fallback chains can encode authority rules in operator precedence.
+    scope: readability
+    triggers: [source_change, complex_expression]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: hybrid
+    requiredEvidence: [expression range, semantic sources, precedence tests]
+    remediation: Express business precedence through named decisions, branches, or a decision table.
+    verification: Test each source and condition combination without penalizing simple defaults.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-005
+    version: 1
+    title: State machine exists only in branches
+    rationale: Implicit states and transitions make legal behavior impossible to enumerate or verify reliably.
+    scope: readability
+    triggers: [source_change, state_transition]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: semantic
+    requiredEvidence: [state reads, state writes, transition coverage]
+    remediation: Use explicit states and legal transitions, a transition table, or phased functions.
+    verification: Add parameterized coverage for every legal and rejected transition.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-006
+    version: 1
+    title: Result shapes are large or structurally dispersed
+    rationale: Repeated inline result variants force maintainers to compare distant object literals for invariants.
+    scope: readability
+    triggers: [source_change, result_shape]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: hybrid
+    requiredEvidence: [object ranges, distinct shapes, return contract]
+    remediation: Define stable DTOs, discriminated unions, or semantic result builders.
+    verification: Ensure callers and contract tests exhaustively handle each legal result variant.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-007
+    version: 1
+    title: Error classification relies on distant or textual evidence
+    rationale: Broad string matching and distant catches misclassify failures when messages or dependencies change.
+    scope: readability
+    triggers: [source_change, error_mapping]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: hybrid
+    requiredEvidence: [throw site, catch range, classification branch]
+    remediation: Preserve typed failure codes or discriminants at the dependency boundary.
+    verification: Test that each typed dependency failure maps to the intended result.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-READ-008
+    version: 1
+    title: Decision and consequence have excessive cognitive distance
+    rationale: Dispersed decisions, side effects, cleanup, and returns make branch invariants expensive to prove.
+    scope: readability
+    triggers: [source_change, cognitive_distance]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: semantic
+    requiredEvidence: [decision point, side effect, cleanup, returned result]
+    remediation: Shorten the causal chain with phase results and local resource lifetimes.
+    verification: Test success, failure, cancellation, and early-return cleanup invariants.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-UNIV-001
+    version: 1
+    title: Production behavior matches its stated contract
+    rationale: Correct behavior requires traceable intent, boundary handling, failure semantics, and compatible outputs.
+    scope: universal
+    triggers: [production_change]
+    defaultSeverity: P1
+    gateMode: block
+    detection: hybrid
+    requiredEvidence: [intent, execution path, behavior verification]
+    remediation: Correct the smallest behavior or contract boundary that causes the demonstrated mismatch.
+    verification: Reproduce the failing condition and run focused success and failure tests.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-CONC-001
+    version: 1
+    title: Concurrent work and resources remain bounded
+    rationale: Low-traffic correctness is insufficient when request fan-out, races, or unbounded work can fail at production QPS.
+    scope: concurrency
+    triggers: [production_change, shared_state]
+    defaultSeverity: P1
+    gateMode: block
+    detection: hybrid
+    requiredEvidence: [amplification estimate, race protection, resource bounds]
+    remediation: Use atomic ownership, bounded queues, backpressure, and explicit multi-instance coordination.
+    verification: Control concurrent interleavings and verify limits under the worst supported load model.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-SEC-001
+    version: 1
+    title: Trust and authorization boundaries are preserved
+    rationale: Untrusted input, credentials, tenant state, and external effects require explicit validation and least privilege.
+    scope: security
+    triggers: [production_change, trust_boundary]
+    defaultSeverity: P1
+    gateMode: block
+    detection: hybrid
+    requiredEvidence:
+      [attacker capability, input boundary, authorization decision]
+    remediation: Validate at the trusted boundary and enforce tenant, owner, and scope server-side.
+    verification: Exercise unauthorized, cross-tenant, malformed, and sensitive-output paths.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-TEST-001
+    version: 1
+    title: Tests provide credible behavioral evidence
+    rationale: Tests that mirror implementation or omit failure paths cannot prove the changed contract remains correct.
+    scope: testing
+    triggers: [production_change, test_change]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: hybrid
+    requiredEvidence:
+      [behavior assertion, boundary coverage, deterministic setup]
+    remediation: Add focused tests of observable outcomes, failures, boundaries, and concurrency where applicable.
+    verification: Demonstrate the test fails without the intended behavior and passes with it.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-COMPAT-001
+    version: 1
+    title: Public contracts remain deployable and reversible
+    rationale: Schema, API, configuration, and data changes must work across mixed versions and rollback sequences.
+    scope: compatibility
+    triggers: [public_contract, data_change]
+    defaultSeverity: P1
+    gateMode: block
+    detection: hybrid
+    requiredEvidence: [consumer contract, deployment order, rollback behavior]
+    remediation: Add versioning, compatibility handling, or an observable reentrant migration.
+    verification: Test old and new producers and consumers in supported deployment orders.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-HYGIENE-001
+    version: 1
+    title: Repository claims and tracked artifacts remain accurate
+    rationale: Misleading documentation, secrets, generated state, and unusable commands prevent reproducible maintenance.
+    scope: repository
+    triggers: [repository_change]
+    defaultSeverity: P2
+    gateMode: warn
+    detection: hybrid
+    requiredEvidence: [tracked artifact, documented claim, reproducible command]
+    remediation: Remove unsafe artifacts and align documentation and commands with verified capabilities.
+    verification: Run the documented checks and scan the actual diff for secrets and generated state.
+    owner: code-quality
+    examples: []
+    lifecycle: active
+  - id: CQ-AGENT-001
+    version: 1
+    title: Peer Agent documents reuse the same-scope AGENTS.md
+    rationale: One canonical shared instruction source prevents duplicated policies from drifting or conflicting.
+    scope: repository
+    triggers: [agent_document_change, repository_change]
+    defaultSeverity: P3
+    gateMode: advisory
+    detection: deterministic
+    requiredEvidence: [same-scope documents, canonical reference graph]
+    remediation: Point peer Agent documents to AGENTS.md and keep only tool-specific deltas.
+    verification: Run the deterministic same-directory Agent document validator.
+    owner: code-quality
+    examples: []
+    lifecycle: active

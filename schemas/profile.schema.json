@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-quality.local/schemas/profile.schema.json",
+  "title": "Code Quality Repository Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "version", "rulePacks"],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "identity": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "technologyTags": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9+_.-]{0,63}$" }
+        }
+      }
+    },
+    "rulePacks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(builtin|repository):[a-z][a-z0-9-]{1,63}$"
+      }
+    },
+    "criticalPaths": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "riskTriggers": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$" }
+    },
+    "provider": { "$ref": "#/$defs/provider" },
+    "dataClassification": {
+      "enum": ["public", "internal", "confidential", "restricted"]
+    },
+    "budgets": { "$ref": "#/$defs/budgets" },
+    "gate": { "$ref": "#/$defs/gate" },
+    "ruleOverrides": {
+      "type": "object",
+      "maxProperties": 1000,
+      "propertyNames": { "pattern": "^CQ-[A-Z]+-[0-9]{3}$" },
+      "additionalProperties": { "$ref": "#/$defs/ruleOverride" }
+    },
+    "waiverLocations": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "scoreModel": { "$ref": "#/$defs/scoreModelSelection" },
+    "peerAgentDocuments": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,63}\\.md$" }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+        },
+        "modelPolicy": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$"
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "maxChangedLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "maxDiffBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "maxStages": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "maxProviderConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "maxProviderAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 5000000 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
+        "maxCostUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "multipleOf": 0.01
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["advisory", "warn", "block"] },
+        "blockSeverity": { "enum": ["P0", "P1", "P2"] },
+        "minimumConfidence": {
+          "enum": ["low", "medium", "high", "deterministic"]
+        }
+      }
+    },
+    "ruleOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "severity": { "enum": ["P0", "P1", "P2", "P3", "NIT"] },
+        "gateMode": { "enum": ["advisory", "warn", "block", "hard_block"] }
+      }
+    },
+    "weights": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_.-]{1,127}$" },
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100,
+        "multipleOf": 0.1
+      }
+    },
+    "scoreModelSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{1,127}$" },
+        "majorWeights": { "$ref": "#/$defs/weights" },
+        "minorWeights": { "$ref": "#/$defs/weights" }
+      }
+    }
+  }
+}
