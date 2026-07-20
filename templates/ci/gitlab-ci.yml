@@ -1,11 +1,19 @@
-# Inactive template. Enable only after ops approval and least-privilege runners.
+# Inactive template. Copy via `cq ci install --target gitlab --confirm` after ops approval.
+# Design reservation: this package does not auto-enable project CI settings.
 code-quality:
-  image: node:22
+  # This template deliberately avoids a mutable container tag. Operations must
+  # bind this tag to an immutably provisioned runner with Node.js 22 + Corepack.
+  tags:
+    - code-quality-node22-locked
+  timeout: 30m
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    # Keep production credentials out of review jobs.
+    CQ_PROVIDER_LIVE_SOAK: "0"
   script:
+    - node -e 'const major=Number(process.versions.node.split(".")[0]);if(major!==22)process.exit(1)'
     - corepack enable
     - corepack pnpm install --frozen-lockfile
-    - corepack pnpm check
-    - corepack pnpm run check:secrets
+    - corepack pnpm check:release

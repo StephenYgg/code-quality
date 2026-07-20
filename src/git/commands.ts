@@ -43,6 +43,14 @@ export interface GitCommandRequest {
   readonly maximumStderrBytes?: number;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal | undefined;
+  readonly gitConfig?: readonly GitConfigEntry[];
+  /** Allows only fixed, read-only hooksPath queries to observe repository config. */
+  readonly hooksPathQuery?: boolean;
+}
+
+export interface GitConfigEntry {
+  readonly key: `http.https://${"github.com" | "gitlab.com"}/.extraHeader`;
+  readonly value: string;
 }
 
 export interface GitCommandResult {
@@ -94,6 +102,32 @@ function validateRequest(request: GitCommandRequest): CommandLimits {
       "Git command arguments are invalid or exceed their hard limit",
     );
   }
+  if (request.hooksPathQuery === true && !isHooksPathQuery(request.args)) {
+    throw new GitCommandError(
+      "GIT_ARGUMENT_INVALID",
+      "Configured hooksPath may only be read by an approved query",
+    );
+  }
+  const gitConfig = request.gitConfig ?? [];
+  if (
+    gitConfig.length > 4 ||
+    gitConfig.some(
+      (entry) =>
+        !/^http\.https:\/\/(?:github\.com|gitlab\.com)\/\.extraHeader$/u.test(
+          entry.key,
+        ) ||
+        entry.value.length === 0 ||
+        entry.value.includes("\0") ||
+        entry.value.includes("\r") ||
+        entry.value.includes("\n") ||
+        Buffer.byteLength(entry.value, "utf8") > 8 * 1024,
+    )
+  ) {
+    throw new GitCommandError(
+      "GIT_ARGUMENT_INVALID",
+      "Transient Git configuration is invalid or exceeds its hard limit",
+    );
+  }
   return {
     maximumStdoutBytes: boundedInteger(
       request.maximumStdoutBytes,
@@ -114,6 +148,19 @@ function validateRequest(request: GitCommandRequest): CommandLimits {
       "timeoutMs",
     ),
   };
+}
+
+function isHooksPathQuery(args: readonly string[]): boolean {
+  return (
+    (args.length === 3 &&
+      args[0] === "config" &&
+      args[1] === "--get" &&
+      args[2] === "core.hooksPath") ||
+    (args.length === 3 &&
+      args[0] === "rev-parse" &&
+      args[1] === "--git-path" &&
+      args[2] === "hooks")
+  );
 }
 
 function isContained(root: string, candidate: string): boolean {
@@ -227,8 +274,11 @@ export function resolveTrustedGitExecution(
   return resolveExecutable(undefined, repository);
 }
 
-function commandEnvironment(path: string): NodeJS.ProcessEnv {
-  return {
+function commandEnvironment(
+  path: string,
+  gitConfig: readonly GitConfigEntry[],
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
     GIT_CONFIG_GLOBAL: devNull,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_NO_REPLACE_OBJECTS: "1",
@@ -243,9 +293,56 @@ function commandEnvironment(path: string): NodeJS.ProcessEnv {
       ? { SystemRoot: process.env.SystemRoot }
       : {}),
   };
+  if (gitConfig.length > 0) {
+    environment.GIT_CONFIG_COUNT = String(gitConfig.length);
+    gitConfig.forEach((entry, index) => {
+      environment[`GIT_CONFIG_KEY_${String(index)}`] = entry.key;
+      environment[`GIT_CONFIG_VALUE_${String(index)}`] = entry.value;
+    });
+  }
+  return environment;
 }
 
 type GitChildProcess = ChildProcessByStdio<null, Readable, Readable>;
+
+function commandArguments(request: GitCommandRequest): readonly string[] {
+  const hookIsolation =
+    request.hooksPathQuery === true ? [] : ["-c", `core.hooksPath=${devNull}`];
+  return [
+    "--no-replace-objects",
+    "--no-pager",
+    ...hookIsolation,
+    "-c",
+    "color.ui=false",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "diff.external=",
+    ...request.args,
+  ];
+}
+
+function spawnGitChild(
+  request: GitCommandRequest,
+  execution: TrustedGitExecution,
+): GitChildProcess {
+  try {
+    return spawn(execution.executable, commandArguments(request), {
+      cwd: request.repository,
+      env: commandEnvironment(execution.path, request.gitConfig ?? []),
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  } catch {
+    throw new GitCommandError(
+      "GIT_SPAWN_FAILED",
+      "Git command could not be started",
+    );
+  }
+}
 
 function terminateProcess(child: GitChildProcess): NodeJS.Timeout {
   try {
@@ -264,6 +361,124 @@ function terminateProcess(child: GitChildProcess): NodeJS.Timeout {
   return forceKill;
 }
 
+class GitProcessObserver {
+  private readonly stdout: Buffer[] = [];
+  private readonly stderr: Buffer[] = [];
+  private stdoutBytes = 0;
+  private stderrBytes = 0;
+  private terminalError: GitCommandError | undefined;
+  private forceKill: NodeJS.Timeout | undefined;
+  private timeout: NodeJS.Timeout | undefined;
+
+  constructor(
+    private readonly child: GitChildProcess,
+    private readonly request: GitCommandRequest,
+    private readonly limits: CommandLimits,
+  ) {}
+
+  run(): Promise<GitCommandResult> {
+    return new Promise((resolve, reject) => {
+      this.timeout = setTimeout(() => {
+        this.terminate(
+          new GitCommandError("GIT_TIMEOUT", "Git command timed out"),
+        );
+      }, this.limits.timeoutMs);
+      this.timeout.unref();
+      this.request.signal?.addEventListener("abort", this.onAbort, {
+        once: true,
+      });
+      if (this.request.signal?.aborted === true) this.onAbort();
+      this.child.stdout.on("data", (chunk: Buffer) => {
+        this.captureStdout(chunk);
+      });
+      this.child.stderr.on("data", (chunk: Buffer) => {
+        this.captureStderr(chunk);
+      });
+      this.child.once("error", this.onSpawnError);
+      this.child.once("close", (code) => {
+        this.complete(code, resolve, reject);
+      });
+    });
+  }
+
+  private readonly onAbort = (): void => {
+    this.terminate(
+      new GitCommandError("GIT_ABORTED", "Git command was cancelled"),
+    );
+  };
+
+  private readonly onSpawnError = (): void => {
+    this.terminate(
+      new GitCommandError(
+        "GIT_SPAWN_FAILED",
+        "Git command could not be started",
+      ),
+    );
+  };
+
+  private terminate(error: GitCommandError): void {
+    if (this.terminalError !== undefined) return;
+    this.terminalError = error;
+    this.forceKill = terminateProcess(this.child);
+  }
+
+  private captureStdout(chunk: Buffer): void {
+    this.stdoutBytes += chunk.length;
+    if (this.stdoutBytes > this.limits.maximumStdoutBytes) {
+      this.terminate(
+        new GitCommandError(
+          "GIT_STDOUT_LIMIT_EXCEEDED",
+          "Git stdout exceeded its hard byte limit",
+        ),
+      );
+      return;
+    }
+    this.stdout.push(Buffer.from(chunk));
+  }
+
+  private captureStderr(chunk: Buffer): void {
+    this.stderrBytes += chunk.length;
+    if (this.stderrBytes > this.limits.maximumStderrBytes) {
+      this.terminate(
+        new GitCommandError(
+          "GIT_STDERR_LIMIT_EXCEEDED",
+          "Git stderr exceeded its hard byte limit",
+        ),
+      );
+      return;
+    }
+    this.stderr.push(Buffer.from(chunk));
+  }
+
+  private complete(
+    code: number | null,
+    resolve: (result: GitCommandResult) => void,
+    reject: (error: GitCommandError) => void,
+  ): void {
+    if (this.timeout !== undefined) clearTimeout(this.timeout);
+    if (this.forceKill !== undefined) clearTimeout(this.forceKill);
+    this.request.signal?.removeEventListener("abort", this.onAbort);
+    if (this.terminalError !== undefined) {
+      reject(this.terminalError);
+      return;
+    }
+    if (code !== 0) {
+      reject(
+        new GitCommandError(
+          "GIT_COMMAND_FAILED",
+          "Git command failed; stderr was captured but not exposed",
+          code ?? undefined,
+        ),
+      );
+      return;
+    }
+    resolve({
+      stdout: Buffer.concat(this.stdout, this.stdoutBytes),
+      stderr: Buffer.concat(this.stderr, this.stderrBytes),
+    });
+  }
+}
+
 export async function runGitCommand(
   request: GitCommandRequest,
 ): Promise<GitCommandResult> {
@@ -275,126 +490,12 @@ export async function runGitCommand(
     );
   }
   if (request.signal?.aborted === true) {
-    return Promise.reject(
-      new GitCommandError("GIT_ABORTED", "Git command was cancelled"),
-    );
+    throw new GitCommandError("GIT_ABORTED", "Git command was cancelled");
   }
-  const execution =
-    request.execution ??
-    (await resolveExecutable(request.executable, request.repository));
-  return new Promise((resolve, reject) => {
-    const args = [
-      "--no-replace-objects",
-      "--no-pager",
-      "-c",
-      `core.hooksPath=${devNull}`,
-      "-c",
-      "color.ui=false",
-      "-c",
-      "core.fsmonitor=false",
-      "-c",
-      "credential.helper=",
-      "-c",
-      "diff.external=",
-      ...request.args,
-    ];
-    let child: GitChildProcess;
-    try {
-      child = spawn(execution.executable, args, {
-        cwd: request.repository,
-        env: commandEnvironment(execution.path),
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-    } catch {
-      reject(
-        new GitCommandError(
-          "GIT_SPAWN_FAILED",
-          "Git command could not be started",
-        ),
-      );
-      return;
-    }
-
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let terminalError: GitCommandError | undefined;
-    let forceKill: NodeJS.Timeout | undefined;
-    const terminate = (error: GitCommandError) => {
-      if (terminalError !== undefined) return;
-      terminalError = error;
-      forceKill = terminateProcess(child);
-    };
-    const onAbort = () => {
-      terminate(
-        new GitCommandError("GIT_ABORTED", "Git command was cancelled"),
-      );
-    };
-    const timeout = setTimeout(() => {
-      terminate(new GitCommandError("GIT_TIMEOUT", "Git command timed out"));
-    }, limits.timeoutMs);
-    timeout.unref();
-    request.signal?.addEventListener("abort", onAbort, { once: true });
-    if (request.signal?.aborted === true) onAbort();
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > limits.maximumStdoutBytes) {
-        terminate(
-          new GitCommandError(
-            "GIT_STDOUT_LIMIT_EXCEEDED",
-            "Git stdout exceeded its hard byte limit",
-          ),
-        );
-        return;
-      }
-      stdout.push(Buffer.from(chunk));
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      if (stderrBytes > limits.maximumStderrBytes) {
-        terminate(
-          new GitCommandError(
-            "GIT_STDERR_LIMIT_EXCEEDED",
-            "Git stderr exceeded its hard byte limit",
-          ),
-        );
-        return;
-      }
-      stderr.push(Buffer.from(chunk));
-    });
-    child.once("error", () => {
-      terminate(
-        new GitCommandError(
-          "GIT_SPAWN_FAILED",
-          "Git command could not be started",
-        ),
-      );
-    });
-    child.once("close", (code) => {
-      clearTimeout(timeout);
-      if (forceKill !== undefined) clearTimeout(forceKill);
-      request.signal?.removeEventListener("abort", onAbort);
-      if (terminalError !== undefined) {
-        reject(terminalError);
-        return;
-      }
-      const stdoutBuffer = Buffer.concat(stdout, stdoutBytes);
-      const stderrBuffer = Buffer.concat(stderr, stderrBytes);
-      if (code !== 0) {
-        reject(
-          new GitCommandError(
-            "GIT_COMMAND_FAILED",
-            "Git command failed; stderr was captured but not exposed",
-            code ?? undefined,
-          ),
-        );
-        return;
-      }
-      resolve({ stdout: stdoutBuffer, stderr: stderrBuffer });
-    });
-  });
+  let execution = request.execution;
+  if (execution === undefined) {
+    execution = await resolveExecutable(request.executable, request.repository);
+  }
+  const child = spawnGitChild(request, execution);
+  return new GitProcessObserver(child, request, limits).run();
 }

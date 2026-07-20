@@ -50,6 +50,11 @@ describe("installed policy assets", () => {
       "profiles/default.yaml",
       "rules/builtin/universal.yaml",
       "src/core/policy.ts",
+      "docs/PROGRESS.md",
+      "docs/standards/readability.md",
+      "docs/standards/concurrency.md",
+      "docs/playbooks/review-process.md",
+      "skills/code-quality-review/SKILL.md",
     ];
     for (const asset of requiredAssets) {
       await expect(
@@ -91,5 +96,12 @@ describe("installed policy assets", () => {
         : undefined;
     expect(diagnostics).toEqual([]);
     expect(rules).toHaveLength(15);
+
+    const progress = await executeFile(
+      process.execPath,
+      [join(installedPackage, "scripts", "check-progress.mjs")],
+      { cwd: installedPackage },
+    );
+    expect(progress.stdout).toContain("percentage=97.4");
   });
 });

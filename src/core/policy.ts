@@ -258,6 +258,14 @@ function buildEffectivePolicy(
     ...(merged.riskTriggers === undefined
       ? {}
       : { riskTriggers: [...merged.riskTriggers] }),
+    ...(merged.qualityCommands === undefined
+      ? {}
+      : {
+          qualityCommands: merged.qualityCommands.map((command) => ({
+            ...command,
+            argv: [...command.argv],
+          })),
+        }),
     ...(merged.peerAgentDocuments === undefined
       ? {}
       : { peerAgentDocuments: [...merged.peerAgentDocuments] }),

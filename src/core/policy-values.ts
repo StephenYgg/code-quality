@@ -116,6 +116,7 @@ function recordOrigins(
     ["/scoreModel/id", layer.scoreModel?.id],
     ["/criticalPaths", layer.criticalPaths],
     ["/riskTriggers", layer.riskTriggers],
+    ["/qualityCommands", layer.qualityCommands],
     ["/peerAgentDocuments", layer.peerAgentDocuments],
   ];
   for (const [path, value] of scalarPaths) {
@@ -193,6 +194,14 @@ export function mergePolicyLayer(
     ...(layer.riskTriggers === undefined
       ? {}
       : { riskTriggers: [...layer.riskTriggers] }),
+    ...(layer.qualityCommands === undefined
+      ? {}
+      : {
+          qualityCommands: layer.qualityCommands.map((command) => ({
+            ...command,
+            argv: [...command.argv],
+          })),
+        }),
     ...(layer.peerAgentDocuments === undefined
       ? {}
       : { peerAgentDocuments: [...layer.peerAgentDocuments] }),

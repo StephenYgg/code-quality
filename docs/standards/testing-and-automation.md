@@ -1,6 +1,6 @@
 # 测试与自动化
 
-本标准定义测试可信度、覆盖率边界、自动化质量门禁和本项目规划中的验证命令。测试必须证明可观察行为和关键不变量；“命令执行过”或覆盖率上升不等于行为正确。
+本标准定义测试可信度、覆盖率边界、自动化质量门禁和本项目验证命令。测试必须证明可观察行为和关键不变量；“命令执行过”或覆盖率上升不等于行为正确。
 
 ## 测试质量
 
@@ -79,61 +79,48 @@ check:secrets
 
 ## 本项目当前状态
 
-截至 2026-07-19，本仓库已实现 TypeScript/pnpm 包、自动化单元/集成测试、严格 policy/schema/profile/waiver 解析、100.0 分评分引擎、TypeScript/JavaScript AST 可读性分析，以及 `validate`、`rules`、`inspect readability`、`score` 的确定性 CLI。模型审查、七种 review input（worktree、staged、commit、range、full repository、PR、MR）、Provider、Forge、Skill、integration installer、Git Hook、发布和 CI workflow 仍未实现。
+截至 2026-07-20，本仓库已经实现七种 review input、四种 Provider、Forge 读取与显式幂等发布、不可变输入、证据验证、100.0 分评分、可读性 AST、Hook preset、Skill 和 integration 安装、受确认保护的 CI 模板安装、benchmark、密钥扫描、覆盖率报告与 19 项进度校验。环境 live soak、外部 dependency audit 和 branch protection 激活不由默认测试静默执行。
 
-## 当前可用的 TypeScript、pnpm 与 cq 验证
-
-当前技术基线为 Node.js 22 或更高兼容版本、严格 TypeScript、ESM、pnpm 与 Vitest。仓库已提供：
+## 当前质量命令
 
 ```text
 pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:unit
 pnpm test:integration
+pnpm test:coverage
 pnpm build
+pnpm benchmark
+pnpm check:progress
+pnpm check:dependencies
+pnpm check:secrets
 pnpm check
+pnpm check:release
 ```
 
-`pnpm check` 依次执行 format check、lint、typecheck、全部测试和 build。`check:dependencies` 与 `check:secrets` 尚未实现，不能把它们记为已运行。任何命令都不得静默降低规则、忽略失败或发布外部状态。
+`check` 是快速、确定性的本地门禁。`check:release` 额外串行执行覆盖率、benchmark、进度矩阵、dependency audit、secret scan 和 `git diff --check`；其中网络或 registry 失败会使命令失败，不得改写成成功。`test:coverage` 使用 Vitest custom provider 与 Node.js V8 precise coverage，输出模块加载率和 observed runtime function coverage；它不提供 source-map 后的行或分支覆盖率，因此不能替代新增关键分支的行为断言。
 
-本地完成 `pnpm build` 后，当前可运行：
+完成 `pnpm build` 后，`node dist/cli.js` 与已安装的 `cq`/`code-quality` 等价。当前主要命令包括 `validate`、`rules`、`inspect readability`、`score`、`review`、`report`、`runs`、`providers validate`、`hooks`、`integrations`、`ci`、`storage` 和 `benchmark`。默认路径不执行目标代码、不发布、不安装；`--run-checks`、`--publish --yes`、installer `--confirm`、Hook/CI 安装和 live soak 都保留独立授权边界。
 
-```text
-cq validate [repository]
-cq rules list [--profile <name>]
-cq rules explain <rule-id> [--profile <name>]
-cq inspect readability <typescript-or-javascript-file>
-cq score <assessment.json>
-```
+## 跨仓库触发分层
 
-在尚未全局安装二进制时，等价入口是 `node dist/cli.js`。当前这些命令都不调用模型、不执行目标代码、不写目标仓库。`validate` 聚合 `CQ-AGENT-001` 与有效 policy/schema/profile/rule/waiver 校验；`inspect readability` 只产生确定性候选并明确把语义评分标为 `not_assessed`；`score` 只计算调用者提供且通过边界校验的 assessment，不自行声称完成代码审查。资源、竞态或平台能力导致证据不完整时返回 exit 3，而不是静默 PASS。
-
-下列命令仍处于规划阶段：
-
-```text
-cq review <input>
-```
-
-远程变更的 `--run-checks` 仍是与只读审查分离的规划能力，安全约束见 [目标代码执行](security.md#目标代码执行)。
-
-## 规划中的跨仓库触发分层
-
-本项目规划为独立的跨仓库审查系统。触发与执行必须分层，任何一层都不能静默扩大下一层权限：
+本项目作为独立的跨仓库审查系统。触发与执行必须分层，任何一层都不能静默扩大下一层权限：
 
 1. **Agent 指令触发层**：全局或仓库 Agent 指令只识别审查时机、授权边界和路由，不复制机器政策。
 2. **Skill 调用层**：Codex/Claude Code Skill 调用 CLI、解释状态并请求必要授权；普通审查不得安装或更新用户 Skill。
-3. **CLI 执行层**：当前 `cq validate/rules/inspect/score` 已提供有界的只读确定性检查与计算；后续 `cq` 还将负责不可变输入、受限 AI 审查、finding 验证和报告。默认不修改目标代码、Git 状态或外部系统。
+3. **CLI 执行层**：`cq` 负责不可变输入、规则解析、受限 AI 审查、finding 验证、评分和报告。默认不修改目标代码、Git 状态或外部系统。
 4. **项目 profile 配置层**：`.code-quality/profile.yaml` 选择规则集、质量命令、风险触发、受信 provider 名称和资源预算。它不能保存 secret、定义凭据 header、重定向 endpoint，或让待审查 head 激活新命令。
 5. **Git Hook 兜底层**：用户显式安装后，pre-commit/pre-push 调用同一 CLI 和 profile。Hook 不拥有另一套规则，不能取代服务端 required check，也不能自动安装。
 
-只有用户显式执行规划中的受管 integration 安装、查看完整变更计划并确认后，才允许修改已识别的全局路由片段或 Skill 目录。
+只有用户显式执行受管 integration 安装、查看完整变更计划并确认后，才允许修改已识别的全局路由片段或 Skill 目录。
 
 目标仓库的 Agent 接入文档必须继续满足 [`CQ-AGENT-001`](universal-gates.md)：同级 `AGENTS.md` 是共性规则唯一事实来源，工具文档只做最小指针和工具差异。全局指令、Skill、profile 与 Hook 都是调用或配置层，不得复制一份会独立漂移的审查标准。
 
-## 规划中的自动化测试范围
+## 自动化测试范围
 
-未来实现必须至少覆盖：
+当前套件覆盖：
 
 - Schema：rule、profile、finding、waiver 和 run 的合法与非法 fixture。
 - Policy：优先级、冲突、过期 waiver 和 effective policy 输出。
@@ -147,19 +134,16 @@ cq review <input>
 - End-to-end：使用确定性 fake provider，不访问外部网络。
 - Concurrency/security：资源上限、stale detection、single-flight、取消、发布幂等、secret redaction 和对抗性 prompt injection。
 
-真实 provider smoke test 规划为显式 opt-in，并排除在默认验证之外。
+真实 Provider/Forge smoke test 是显式 opt-in，并排除在默认验证之外。
 
 ## Hook 与 CI 状态
 
-Git Hook 仅处于规划阶段，当前未安装、未提供：
-
-- 规划的 balanced preset 是 pre-commit 执行确定性检查和一次快速缓存 AI 审查并默认 warning，pre-push 执行从 upstream base 起的完整审查。
-- 规划的 strict preset 允许每次 commit 前执行完整审查。
-- Hook 安装必须显式执行，只修改可识别的托管 Hook；遇到未知 Hook 必须拒绝覆盖并提供 chaining 方案。
-- `warn` 不阻止 commit/push；`block` 返回 CLI gate 状态。provider 或网络导致的不完整审查默认本地 fail-open，但必须醒目标记 incomplete。
-- 本地 Hook 可被 Git 选项绕过，不得宣称是不可绕过门禁。
-
-CI 也仅处于规划阶段，本仓库不启用 CI workflow。未来资产只能先放在 `templates/ci/` 作为不执行的模板，并记录最小权限、secret、预期 check name、缓存和 branch protection 配置。模板必须锁定不可变 action revision；只有获得单独运维授权并具备无生产凭据的隔离 runner 后，才可启用服务端 required check。
+- balanced preset 的 pre-commit 执行确定性检查和一次 fast review，pre-push 使用 upstream range 完整审查；strict preset 可在 commit 前完整审查。
+- Hook 安装必须显式执行，只编辑识别出的 managed block；未知 Hook 拒绝覆盖，双 Hook 写入失败会回滚。
+- `warn` 不阻止 commit/push；`block` 遵循 CLI Gate。Provider 或网络不完整默认本地 fail-open，但必须输出 `INCOMPLETE`。
+- 本地 Hook 可被绕过，不得冒充服务端 required check。
+- CI 模板保持在 `templates/ci/`，仓库自身不启用 workflow。GitHub action 固定到完整 commit SHA；GitLab 不引用可变镜像，要求 ops 将专用 tag 绑定到不可变 Node.js 22 runner。
+- `cq ci install` 先预览，只有 `--confirm` 才写目标文件；branch protection 仍是独立 ops 动作。
 
 ## 验证报告要求
 

@@ -1,0 +1,41 @@
+# Trusted user configuration lives OUTSIDE reviewed repositories.
+# Default path (override with CQ_CONFIG_PATH or --config):
+#   macOS: ~/Library/Application Support/code-quality/config.yaml
+#   Linux: ${XDG_CONFIG_HOME:-~/.config}/code-quality/config.yaml
+#
+# Repository profiles may only select a named provider already listed here.
+# They cannot define endpoints, executables, or credential environment names.
+
+schemaVersion: "1"
+defaultProvider: codex
+
+providers:
+  - name: codex
+    kind: codex_cli
+    executable: /usr/local/bin/codex
+    allowedModels:
+      - gpt-5
+    defaultModel: gpt-5
+
+  - name: claude
+    kind: claude_cli
+    executable: /usr/local/bin/claude
+    allowedModels:
+      - claude-sonnet-4
+    defaultModel: claude-sonnet-4
+
+  - name: openai
+    kind: openai_compatible
+    endpoint: https://api.openai.com/v1/chat/completions
+    credentialEnv: OPENAI_API_KEY
+    allowedModels:
+      - gpt-4.1
+    defaultModel: gpt-4.1
+
+  - name: anthropic
+    kind: anthropic_compatible
+    endpoint: https://api.anthropic.com/v1/messages
+    credentialEnv: ANTHROPIC_API_KEY
+    allowedModels:
+      - claude-sonnet-4
+    defaultModel: claude-sonnet-4

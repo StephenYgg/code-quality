@@ -521,6 +521,70 @@ declare module "vendor" {
     expect(callbackIds(after)).toEqual(callbackIds(before));
   });
 
+  test("distinguishes anonymous object contexts by stable property roles", () => {
+    const source = (reversed: boolean): string => {
+      const first = "use(flag ? {} : { first: () => alpha() });";
+      const second = "use(flag ? {} : { second: () => beta() });";
+      return `function setup(flag) { ${reversed ? `${second} ${first}` : `${first} ${second}`} }`;
+    };
+    const before = analyzeTypeScriptSource("object-contexts.ts", source(false));
+    const after = analyzeTypeScriptSource("object-contexts.ts", source(true));
+    const callbackIds = (report: typeof before): readonly string[] =>
+      report.functions
+        .filter(({ kind }) => kind === "arrow")
+        .map(({ symbolId }) => symbolId)
+        .sort();
+
+    expect(before.complete).toBe(true);
+    expect(after.complete).toBe(true);
+    expect(new Set(callbackIds(before)).size).toBe(2);
+    expect(callbackIds(after)).toEqual(callbackIds(before));
+  });
+
+  test("distinguishes same-shape anonymous objects by initializer structure", () => {
+    const report = analyzeTypeScriptSource(
+      "object-initializers.ts",
+      `function run(enabled, values) {
+  if (!enabled) return { kind: "continue", failed: false };
+  return { kind: "continue", failed: values.some((value) => value.failed) };
+}`,
+    );
+
+    expect(report.complete).toBe(true);
+    expect(report.functions.map(({ kind }) => kind)).toContain("arrow");
+  });
+
+  test("distinguishes nested Promise settlement callbacks by full structure", () => {
+    const report = analyzeTypeScriptSource(
+      "promise-settlement.ts",
+      `function raceWithSignal(operation, signal) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      finish(() => reject(signal.reason));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        finish(() => resolve(value));
+      },
+      (error) => {
+        finish(() => reject(error));
+      },
+    );
+  });
+}`,
+    );
+
+    expect(report.complete).toBe(true);
+  });
+
   test("keeps try identities unique and stable across distinct block reordering", () => {
     const source = (reversed: boolean): string => {
       const first = "if (mode === 'first') { try { return 1; } finally {} }";

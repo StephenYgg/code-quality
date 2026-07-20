@@ -32,6 +32,25 @@ interface FunctionOwner {
   readonly symbolId: string;
 }
 
+interface StructuralIndexState {
+  readonly sourceFile: ts.SourceFile;
+  readonly work: AnalysisWorkTracker;
+  readonly summaries: ReturnType<typeof summarizeStructure>;
+  readonly identities: {
+    readonly functionIds: Map<ts.FunctionLikeDeclaration, string>;
+    readonly tryIds: Map<ts.TryStatement, TryStructuralIdentity>;
+  };
+  readonly ownership: {
+    readonly contextByNode: Map<ts.Node, IdentityContext>;
+    readonly functionOwnerByNode: Map<ts.Node, FunctionOwner>;
+  };
+  readonly ids: {
+    readonly occurrences: Map<string, number>;
+    readonly assignedIds: Map<string, number>;
+    readonly ambiguousIds: Set<string>;
+  };
+}
+
 export interface TryStructuralIdentity {
   readonly symbolId: string;
   readonly ownerName?: string;
@@ -55,101 +74,155 @@ export function createStructuralIdentityIndex(
   sourceFile: ts.SourceFile,
   work: AnalysisWorkTracker,
 ): StructuralIdentityIndex {
-  const summaries = summarizeStructure(nodes, work);
-  const functionIds = new Map<ts.FunctionLikeDeclaration, string>();
-  const tryIds = new Map<ts.TryStatement, TryStructuralIdentity>();
-  const contextByNode = new Map<ts.Node, IdentityContext>();
-  const functionOwnerByNode = new Map<ts.Node, FunctionOwner>();
-  const occurrences = new Map<string, number>();
-  const assignedIds = new Map<string, number>();
-  const ambiguousIds = new Set<string>();
-
-  for (const node of nodes) {
-    work.consume("structuralIdentityNodeVisits");
-    const inheritedContext = contextByNode.get(node.parent) ?? ROOT_CONTEXT;
-    const inheritedOwner = functionOwnerByNode.get(node.parent);
-    let context = inheritedContext;
-    let functionOwner = inheritedOwner;
-    const ownerBase = structuralOwnerBase(
-      node,
-      sourceFile,
-      summaries.targetRoleSummaries,
-    );
-
-    if (ownerBase !== undefined) {
-      const symbolId = nextStructuralId(
-        identityPrefix(inheritedContext),
-        ownerBase,
-        occurrences,
-        work,
-        isFunctionUnit(node) || summaries.relevantNodes.has(node)
-          ? ambiguousIds
-          : undefined,
-      );
-      recordAssignedId(symbolId, assignedIds);
-      context = { ...ROOT_CONTEXT, ownerId: symbolId };
-      if (isFunctionUnit(node)) {
-        functionIds.set(node, symbolId);
-        functionOwner = {
-          name: inferredFunctionName(node, sourceFile),
-          symbolId,
-        };
-      }
-    } else if (summaries.relevantNodes.has(node)) {
-      const wrapperBase = structuralWrapperBase(node, summaries.fingerprints);
-      if (wrapperBase !== undefined) {
-        context = appendWrapperContext(
-          inheritedContext,
-          wrapperBase,
-          occurrences,
-          work,
-        );
-      }
-    }
-
-    if (ts.isTryStatement(node)) {
-      const role =
-        summaries.targetRoleSummaries.get(node) ?? EMPTY_ROLE_SUMMARY;
-      const tryBase = `try:${roleSummaryHex(role)}`;
-      const symbolId = nextStructuralId(
-        identityPrefix(inheritedContext, true),
-        tryBase,
-        occurrences,
-        work,
-        ambiguousIds,
-      );
-      recordAssignedId(symbolId, assignedIds);
-      tryIds.set(node, {
-        symbolId,
-        ...(functionOwner === undefined
-          ? {}
-          : {
-              ownerName: functionOwner.name,
-              ownerSymbolId: functionOwner.symbolId,
-            }),
-      });
-      context = appendWrapperContext(
-        inheritedContext,
-        `try:${symbolId}`,
-        occurrences,
-        work,
-      );
-    }
-
-    contextByNode.set(node, context);
-    if (functionOwner !== undefined)
-      functionOwnerByNode.set(node, functionOwner);
-  }
-
+  const state = createStructuralIndexState(sourceFile, work, nodes);
+  for (const node of nodes) indexStructuralNode(node, state);
   return {
-    functionIds,
-    tryIds,
-    duplicateIds: [...assignedIds]
+    functionIds: state.identities.functionIds,
+    tryIds: state.identities.tryIds,
+    duplicateIds: [...state.ids.assignedIds]
       .filter(([, count]) => count > 1)
       .map(([id]) => id)
-      .concat([...ambiguousIds])
+      .concat([...state.ids.ambiguousIds])
       .sort(),
   };
+}
+
+function createStructuralIndexState(
+  sourceFile: ts.SourceFile,
+  work: AnalysisWorkTracker,
+  nodes: readonly ts.Node[],
+): StructuralIndexState {
+  return {
+    sourceFile,
+    work,
+    summaries: summarizeStructure(nodes, work),
+    identities: { functionIds: new Map(), tryIds: new Map() },
+    ownership: {
+      contextByNode: new Map(),
+      functionOwnerByNode: new Map(),
+    },
+    ids: {
+      occurrences: new Map(),
+      assignedIds: new Map(),
+      ambiguousIds: new Set(),
+    },
+  };
+}
+
+function indexStructuralNode(node: ts.Node, state: StructuralIndexState): void {
+  state.work.consume("structuralIdentityNodeVisits");
+  const inheritedContext =
+    state.ownership.contextByNode.get(node.parent) ?? ROOT_CONTEXT;
+  const inheritedOwner = state.ownership.functionOwnerByNode.get(node.parent);
+  const owner = indexStructuralOwner(
+    node,
+    inheritedContext,
+    inheritedOwner,
+    state,
+  );
+  const context = ts.isTryStatement(node)
+    ? indexTryIdentity(node, inheritedContext, owner.functionOwner, state)
+    : owner.context;
+  state.ownership.contextByNode.set(node, context);
+  if (owner.functionOwner !== undefined) {
+    state.ownership.functionOwnerByNode.set(node, owner.functionOwner);
+  }
+}
+
+function indexStructuralOwner(
+  node: ts.Node,
+  inheritedContext: IdentityContext,
+  inheritedOwner: FunctionOwner | undefined,
+  state: StructuralIndexState,
+): {
+  readonly context: IdentityContext;
+  readonly functionOwner?: FunctionOwner;
+} {
+  const ownerBase = structuralOwnerBase(
+    node,
+    state.sourceFile,
+    state.summaries.targetRoleSummaries,
+    state.summaries.fingerprints,
+    state.work,
+  );
+  if (ownerBase === undefined) {
+    const wrapperBase = state.summaries.relevantNodes.has(node)
+      ? structuralWrapperBase(node, state.summaries.fingerprints)
+      : undefined;
+    return {
+      context:
+        wrapperBase === undefined
+          ? inheritedContext
+          : appendWrapperContext(
+              inheritedContext,
+              wrapperBase,
+              state.ids.occurrences,
+              state.work,
+            ),
+      ...(inheritedOwner === undefined
+        ? {}
+        : { functionOwner: inheritedOwner }),
+    };
+  }
+  const symbolId = nextStructuralId(
+    identityPrefix(inheritedContext),
+    ownerBase,
+    state.ids.occurrences,
+    state.work,
+    isFunctionUnit(node) || state.summaries.relevantNodes.has(node)
+      ? state.ids.ambiguousIds
+      : undefined,
+  );
+  recordAssignedId(symbolId, state.ids.assignedIds);
+  if (!isFunctionUnit(node)) {
+    return {
+      context: { ...ROOT_CONTEXT, ownerId: symbolId },
+      ...(inheritedOwner === undefined
+        ? {}
+        : { functionOwner: inheritedOwner }),
+    };
+  }
+  state.identities.functionIds.set(node, symbolId);
+  return {
+    context: { ...ROOT_CONTEXT, ownerId: symbolId },
+    functionOwner: {
+      name: inferredFunctionName(node, state.sourceFile),
+      symbolId,
+    },
+  };
+}
+
+function indexTryIdentity(
+  node: ts.TryStatement,
+  inheritedContext: IdentityContext,
+  functionOwner: FunctionOwner | undefined,
+  state: StructuralIndexState,
+): IdentityContext {
+  const role =
+    state.summaries.targetRoleSummaries.get(node) ?? EMPTY_ROLE_SUMMARY;
+  const symbolId = nextStructuralId(
+    identityPrefix(inheritedContext, true),
+    `try:${roleSummaryHex(role)}`,
+    state.ids.occurrences,
+    state.work,
+    state.ids.ambiguousIds,
+  );
+  recordAssignedId(symbolId, state.ids.assignedIds);
+  state.identities.tryIds.set(node, {
+    symbolId,
+    ...(functionOwner === undefined
+      ? {}
+      : {
+          ownerName: functionOwner.name,
+          ownerSymbolId: functionOwner.symbolId,
+        }),
+  });
+  return appendWrapperContext(
+    inheritedContext,
+    `try:${symbolId}`,
+    state.ids.occurrences,
+    state.work,
+  );
 }
 
 function identityPrefix(
@@ -223,6 +296,8 @@ function structuralOwnerBase(
   node: ts.Node,
   sourceFile: ts.SourceFile,
   targetRoleSummaries: ReadonlyMap<ts.Node, RoleSummary>,
+  fingerprints: ReadonlyMap<ts.Node, Fingerprint>,
+  work: AnalysisWorkTracker,
 ): string | undefined {
   if (isFunctionUnit(node)) {
     const inferredName = inferredFunctionName(node, sourceFile);
@@ -230,14 +305,14 @@ function structuralOwnerBase(
     const base = `${functionIdentityRole(node)}:${name}`;
     if (name !== "<anonymous>") return base;
     const role = targetRoleSummaries.get(node) ?? EMPTY_ROLE_SUMMARY;
-    return `${base}:${roleSummaryHex(role)}`;
+    return `${base}:${roleSummaryHex(role)}:${nodeFingerprint(node, fingerprints)}`;
   }
   if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
     return `class:${className(node)}`;
   }
   if (ts.isModuleDeclaration(node)) return moduleBase(node);
   if (ts.isObjectLiteralExpression(node)) {
-    return `object:${objectName(node, sourceFile)}`;
+    return objectIdentityBase(node, sourceFile, fingerprints, work);
   }
   return undefined;
 }
@@ -266,7 +341,7 @@ function structuralWrapperBase(
   fingerprints: ReadonlyMap<ts.Node, Fingerprint>,
 ): string | undefined {
   if (ts.isCallExpression(node)) {
-    return `call:${nodeFingerprint(node.expression, fingerprints)}`;
+    return `call:${nodeFingerprint(node, fingerprints)}`;
   }
   if (ts.isIfStatement(node)) {
     return `if:${nodeFingerprint(node.expression, fingerprints)}`;
@@ -334,4 +409,43 @@ function objectName(
     return propertyNameText(node.parent.name, sourceFile);
   }
   return "<anonymous>";
+}
+
+function objectIdentityBase(
+  node: ts.ObjectLiteralExpression,
+  sourceFile: ts.SourceFile,
+  fingerprints: ReadonlyMap<ts.Node, Fingerprint>,
+  work: AnalysisWorkTracker,
+): string {
+  const name = objectName(node, sourceFile);
+  if (name !== "<anonymous>") return `object:${name}`;
+
+  let fingerprint = INITIAL_FINGERPRINT;
+  for (const property of node.properties) {
+    work.consume("structuralRoleOperations");
+    const role = objectPropertyRole(property, sourceFile, fingerprints);
+    work.consume("structuralPathTextUnits", role.length);
+    for (let index = 0; index < role.length; index += 1) {
+      fingerprint = mixFingerprint(fingerprint, role.charCodeAt(index));
+    }
+  }
+  return `object:<anonymous>:${fingerprintHex(fingerprint)}`;
+}
+
+function objectPropertyRole(
+  property: ts.ObjectLiteralElementLike,
+  sourceFile: ts.SourceFile,
+  fingerprints: ReadonlyMap<ts.Node, Fingerprint>,
+): string {
+  if (ts.isSpreadAssignment(property)) {
+    return `spread:${nodeFingerprint(property.expression, fingerprints)}`;
+  }
+  const name = propertyNameText(property.name, sourceFile);
+  if (ts.isShorthandPropertyAssignment(property)) {
+    return `${String(property.kind)}:${name}`;
+  }
+  const value = ts.isPropertyAssignment(property)
+    ? property.initializer
+    : property;
+  return `${String(property.kind)}:${name}:${nodeFingerprint(value, fingerprints)}`;
 }

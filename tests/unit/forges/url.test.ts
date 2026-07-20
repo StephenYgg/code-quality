@@ -34,6 +34,12 @@ describe("forge URLs", () => {
     expect(() => parseForgeUrl("https://example.com/a/b/pull/1")).toThrow(
       ForgeUrlError,
     );
+    expect(() =>
+      parseForgeUrl("https://uploads.github.com/a/b/pull/1"),
+    ).toThrow(ForgeUrlError);
+    expect(() =>
+      parseForgeUrl("https://pages.gitlab.com/a/b/-/merge_requests/1"),
+    ).toThrow(ForgeUrlError);
   });
 
   test("publication markers are idempotent by identity", () => {

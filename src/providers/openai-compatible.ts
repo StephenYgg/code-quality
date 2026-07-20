@@ -7,6 +7,7 @@ import {
   ProviderError,
 } from "./provider.js";
 import { HttpReviewProvider } from "./http.js";
+import { parseProviderUsage } from "./provider-usage.js";
 
 export class OpenAiCompatibleProvider extends HttpReviewProvider {
   constructor(config: Omit<HttpProviderConfig, "kind">) {
@@ -103,11 +104,7 @@ export class OpenAiCompatibleProvider extends HttpReviewProvider {
         };
         readonly finish_reason?: string;
       }[];
-      readonly usage?: {
-        readonly prompt_tokens?: number;
-        readonly completion_tokens?: number;
-        readonly total_tokens?: number;
-      };
+      readonly usage?: unknown;
     };
     const choice = record.choices?.[0];
     const contentText = choice?.message?.content;
@@ -132,16 +129,14 @@ export class OpenAiCompatibleProvider extends HttpReviewProvider {
         "OpenAI-compatible content is not schema JSON",
       );
     }
-    const input = record.usage?.prompt_tokens ?? 0;
-    const output = record.usage?.completion_tokens ?? 0;
     const finish = choice?.finish_reason ?? "unknown";
     return {
       content,
-      usage: {
-        inputTokens: input,
-        outputTokens: output,
-        totalTokens: record.usage?.total_tokens ?? input + output,
-      },
+      usage: parseProviderUsage(record.usage, {
+        input: "prompt_tokens",
+        output: "completion_tokens",
+        total: "total_tokens",
+      }),
       finishReason:
         finish === "length"
           ? "length"

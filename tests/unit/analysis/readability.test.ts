@@ -306,6 +306,83 @@ describe("evaluateReadability", () => {
     );
   });
 
+  test("keeps the repository manifest below the large-file review threshold", async () => {
+    const source = await readFile(
+      new URL("../../../src/git/repository-manifest.ts", import.meta.url),
+      "utf8",
+    );
+    const analysis = analyzeTypeScriptSource(
+      "src/git/repository-manifest.ts",
+      source,
+    );
+
+    const report = evaluateReadability(analysis);
+
+    expect(analysis.complete).toBe(true);
+    expect(
+      report.candidates.some(({ ruleId }) => ruleId === "CQ-READ-002"),
+    ).toBe(false);
+  });
+
+  test("keeps remediated production hotspots below their readability signals", async () => {
+    const expectations = [
+      [
+        "analysis/typescript-identities.ts",
+        "createStructuralIdentityIndex",
+        ["CQ-READ-001"],
+      ],
+      ["core/findings.ts", "decideGate", ["CQ-READ-004"]],
+      ["core/findings.ts", "dedupeFindings", ["CQ-READ-004"]],
+      [
+        "forges/github.ts",
+        "read",
+        ["CQ-READ-001", "CQ-READ-004", "CQ-READ-008"],
+      ],
+      ["forges/gitlab.ts", "read", ["CQ-READ-001", "CQ-READ-008"]],
+      ["git/commands.ts", "runGitCommand", ["CQ-READ-001"]],
+      [
+        "git/repository-manifest.ts",
+        "collectRepositoryManifest",
+        ["CQ-READ-006"],
+      ],
+      ["providers/claude-cli.ts", "parseResponse", ["CQ-READ-004"]],
+      ["providers/http.ts", "redactDiagnostic", ["CQ-READ-004"]],
+      [
+        "providers/process-provider.ts",
+        "runProcess",
+        ["CQ-READ-005", "CQ-READ-006"],
+      ],
+      ["reporters/review-terminal.ts", "renderReviewTerminal", ["CQ-READ-001"]],
+      ["review/orchestrator.ts", "runReview", ["CQ-READ-004"]],
+      ["review/planner.ts", "planReview", ["CQ-READ-004"]],
+      ["review/prompts.ts", "buildStagePrompt", ["CQ-READ-004"]],
+      ["storage/cache.ts", "publishCacheEntry", ["CQ-READ-004"]],
+      ["storage/cache.ts", "readCacheEntry", ["CQ-READ-004"]],
+    ] as const;
+    const failures: string[] = [];
+
+    for (const [relativePath, symbol, ruleIds] of expectations) {
+      const source = await readFile(
+        new URL(`../../../src/${relativePath}`, import.meta.url),
+        "utf8",
+      );
+      const report = evaluateReadability(
+        analyzeTypeScriptSource(`src/${relativePath}`, source),
+      );
+      const expectedRules = new Set<string>(ruleIds);
+      for (const candidate of report.candidates) {
+        if (
+          candidate.symbol === symbol &&
+          expectedRules.has(candidate.ruleId)
+        ) {
+          failures.push(`${relativePath}:${symbol}:${candidate.ruleId}`);
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+
   test("classifies baseline hotspots as expanded, improved, unchanged, or new", () => {
     const baseline = analyzeTypeScriptSource(
       "hotspots.ts",

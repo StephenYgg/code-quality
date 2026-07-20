@@ -11,7 +11,8 @@
     "policyHash",
     "gate",
     "findingIds",
-    "timestamps"
+    "timestamps",
+    "reproducibility"
   ],
   "properties": {
     "schemaVersion": { "const": "1" },
@@ -19,7 +20,14 @@
     "input": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "scope", "repository", "head", "contentHash"],
+      "required": [
+        "kind",
+        "scope",
+        "repository",
+        "head",
+        "contentHash",
+        "contentBundleHash"
+      ],
       "properties": {
         "kind": {
           "enum": [
@@ -42,7 +50,11 @@
           "maxLength": 300
         },
         "head": { "type": "string", "minLength": 1, "maxLength": 300 },
-        "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "contentBundleHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       }
     },
     "policyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
@@ -64,13 +76,21 @@
       ],
       "properties": {
         "modelId": { "type": "string", "minLength": 1, "maxLength": 300 },
-        "modelVersion": { "type": "integer", "minimum": 1 },
+        "modelVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
         "normalizedTenths": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 1000
         },
-        "coverageTenths": { "type": "integer", "minimum": 0, "maximum": 1000 }
+        "coverageTenths": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 1000
+        }
       }
     },
     "timestamps": {
@@ -80,6 +100,49 @@
       "properties": {
         "startedAt": { "$ref": "#/$defs/timestamp" },
         "completedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promptBundleVersion",
+        "providerName",
+        "providerKind",
+        "model",
+        "adapterVersion",
+        "scoreGate",
+        "contextIncomplete",
+        "providerAttempts"
+      ],
+      "properties": {
+        "promptBundleVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "providerName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "providerKind": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "adapterVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "providerVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "cacheKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "fromCache": { "type": "boolean" },
+        "scoreGate": { "enum": ["PASS", "WARN", "BLOCK", "INCOMPLETE"] },
+        "contextIncomplete": { "type": "boolean" },
+        "providerAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
       }
     }
   },

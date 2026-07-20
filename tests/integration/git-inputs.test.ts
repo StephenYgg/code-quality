@@ -1,16 +1,31 @@
 import { execFile } from "node:child_process";
-import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, test } from "vitest";
 
+import { createImmutableReviewInput } from "../../src/core/review-input.js";
+import { createReviewSnapshot } from "../../src/core/snapshots.js";
+import { resolveTrustedGitExecution } from "../../src/git/commands.js";
+import { captureContentEntries } from "../../src/git/content-capture.js";
 import {
   captureLocalGitInput,
+  captureLocalGitReviewInput,
   GitInputError,
   type LocalGitInputIo,
 } from "../../src/git/inputs.js";
+import { collectReviewContext } from "../../src/review/context.js";
 
 const executeFile = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -89,17 +104,235 @@ describe("local Git input snapshots", () => {
     expect(first.inputKind).toBe("worktree");
     expect(first.scope).toBe("change");
     expect(first.comparisonBase).toBe(base);
-    expect(first.files.map((file) => file.path)).toEqual(trackedPaths);
-    expect(first.exclusions).toContainEqual({
-      path: untracked,
-      reason: "untracked",
-    });
-    expect(first.incomplete).toBe(true);
+    expect(first.files.map((file) => file.path)).toEqual(
+      [...trackedPaths, untracked].sort(),
+    );
+    expect(first.files).toContainEqual(
+      expect.objectContaining({ path: untracked, status: "added" }),
+    );
+    expect(first.exclusions).not.toContainEqual(
+      expect.objectContaining({ path: untracked }),
+    );
+    expect(first.incomplete).toBe(false);
     expect(first.contentHash).toBe(second.contentHash);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.files)).toBe(true);
     expect(Object.isFrozen(first.files[0])).toBe(true);
     expect(Reflect.set(first.files[0] ?? {}, "path", "mutated")).toBe(false);
+  });
+
+  test("captures normal worktree bytes on macOS without a resolvable fd link", async () => {
+    const repository = await createRepository();
+    const path = join(repository, "value.txt");
+    await writeFile(path, "base\n", "utf8");
+    await commitAll(repository, "initial");
+    await writeFile(path, "worktree bytes\n", "utf8");
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.contentByPath.get("value.txt")?.toString("utf8")).toBe(
+      "worktree bytes\n",
+    );
+  });
+
+  test("captures eligible untracked text as an added review file", async () => {
+    const repository = await createRepository();
+    await writeFile(join(repository, "tracked.ts"), "export const base = 1;\n");
+    await commitAll(repository, "initial");
+    await writeFile(
+      join(repository, "untracked.ts"),
+      "export const untracked = true;\n",
+    );
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.snapshot.files).toContainEqual(
+      expect.objectContaining({
+        path: "untracked.ts",
+        status: "added",
+        binary: false,
+      }),
+    );
+    expect(input.snapshot.exclusions).not.toContainEqual(
+      expect.objectContaining({ path: "untracked.ts" }),
+    );
+    expect(input.contentByPath.get("untracked.ts")?.toString("utf8")).toBe(
+      "export const untracked = true;\n",
+    );
+  });
+
+  test("excludes unsafe untracked content with path-scoped reasons", async () => {
+    const repository = await createRepository();
+    await writeFile(join(repository, "tracked.ts"), "export const base = 1;\n");
+    await commitAll(repository, "initial");
+    await writeFile(join(repository, "binary.dat"), Buffer.from([0, 1, 2]));
+    await writeFile(join(repository, "invalid.ts"), Buffer.from([0xc3, 0x28]));
+    await writeFile(join(repository, ".env.local"), "TOKEN=not-for-review\n");
+    await writeFile(
+      join(repository, "credential.ts"),
+      'export const apiKey = "abcdefghijklmnopqrstuvwxyz";\n',
+    );
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.snapshot.exclusions).toEqual(
+      expect.arrayContaining([
+        { path: ".env.local", reason: "suspected_secret" },
+        { path: "binary.dat", reason: "binary" },
+        { path: "credential.ts", reason: "suspected_secret" },
+        { path: "invalid.ts", reason: "unsupported" },
+      ]),
+    );
+    for (const path of [
+      ".env.local",
+      "binary.dat",
+      "credential.ts",
+      "invalid.ts",
+    ]) {
+      expect(input.contentByPath.has(path)).toBe(false);
+    }
+    expect(input.snapshot.incomplete).toBe(true);
+  });
+
+  test("rejects same-path untracked content mutation across 20 interleavings", async () => {
+    const repository = await createRepository();
+    await writeFile(join(repository, "tracked.ts"), "export const base = 1;\n");
+    await commitAll(repository, "initial");
+    const path = join(repository, "untracked.ts");
+    for (let iteration = 0; iteration < 20; iteration += 1) {
+      await writeFile(path, `export const value = ${String(iteration * 2)};\n`);
+      const io: LocalGitInputIo = {
+        beforeSourceVerification: async () => {
+          await writeFile(
+            path,
+            `export const value = ${String(iteration * 2 + 1)};\n`,
+          );
+        },
+      };
+
+      await expect(
+        captureLocalGitReviewInput({ repository, worktree: true }, io),
+      ).rejects.toMatchObject({ code: "GIT_SOURCE_STALE" });
+    }
+  }, 15_000);
+
+  test("marks files beyond the local content cap with path exclusions", async () => {
+    const repository = await createRepository();
+    for (let index = 0; index <= 40; index += 1) {
+      await writeFile(
+        join(repository, `f${String(index).padStart(2, "0")}.ts`),
+        `export const value = ${String(index)};\n`,
+      );
+    }
+    await commitAll(repository, "initial");
+    for (let index = 0; index <= 40; index += 1) {
+      await writeFile(
+        join(repository, `f${String(index).padStart(2, "0")}.ts`),
+        `export const value = ${String(index + 1)};\n`,
+      );
+    }
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.snapshot.files).toHaveLength(41);
+    expect(input.contentByPath.size).toBe(40);
+    expect(input.snapshot.exclusions).toContainEqual({
+      path: "f40.ts",
+      reason: "file_limit",
+    });
+    expect(input.snapshot.incomplete).toBe(true);
+  });
+
+  test("omits an entire file that exceeds the local per-file byte cap", async () => {
+    const repository = await createRepository();
+    await writeFile(join(repository, "large.txt"), "small\n");
+    await commitAll(repository, "initial");
+    await writeFile(join(repository, "large.txt"), "x".repeat(70 * 1024));
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.contentByPath.has("large.txt")).toBe(false);
+    expect(input.snapshot.exclusions).toContainEqual({
+      path: "large.txt",
+      reason: "file_limit",
+    });
+    expect(input.snapshot.incomplete).toBe(true);
+  });
+
+  test("accepts 64 KiB files and wholly omits 64 KiB plus one byte", async () => {
+    const repository = await createRepository();
+    await writeFile(join(repository, "accepted.txt"), "small\n");
+    await writeFile(join(repository, "over-limit.txt"), "small\n");
+    await commitAll(repository, "initial");
+    await writeFile(join(repository, "accepted.txt"), "a".repeat(64 * 1024));
+    await writeFile(
+      join(repository, "over-limit.txt"),
+      "b".repeat(64 * 1024 + 1),
+    );
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.contentByPath.get("accepted.txt")?.length).toBe(64 * 1024);
+    expect(input.contentByPath.has("over-limit.txt")).toBe(false);
+    expect(input.snapshot.exclusions).toContainEqual({
+      path: "over-limit.txt",
+      reason: "file_limit",
+    });
+    expect(input.snapshot.incomplete).toBe(true);
+  });
+
+  test("omits whole files after the local aggregate byte cap", async () => {
+    const repository = await createRepository();
+    for (let index = 0; index < 9; index += 1) {
+      await writeFile(
+        join(repository, `large-${String(index)}.txt`),
+        `base ${String(index)}\n`,
+      );
+    }
+    await commitAll(repository, "initial");
+    for (let index = 0; index < 9; index += 1) {
+      await writeFile(
+        join(repository, `large-${String(index)}.txt`),
+        String(index).repeat(index < 8 ? 64 * 1024 : 20),
+      );
+    }
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      worktree: true,
+    });
+
+    expect(input.contentByPath.size).toBe(8);
+    expect(input.contentByPath.has("large-8.txt")).toBe(false);
+    expect(input.snapshot.exclusions).toContainEqual({
+      path: "large-8.txt",
+      reason: "aggregate_byte_limit",
+    });
+    expect(input.snapshot.incomplete).toBe(true);
+    expect(
+      [...input.contentByPath.values()].reduce(
+        (total, bytes) => total + bytes.length,
+        0,
+      ),
+    ).toBe(512 * 1024);
   });
 
   test("captures staged rename and binary metadata", async () => {
@@ -125,6 +358,28 @@ describe("local Git input snapshots", () => {
     );
     expect(snapshot.files).toContainEqual(
       expect.objectContaining({ path: "image.bin", binary: true }),
+    );
+  });
+
+  test("captures staged index bytes instead of unstaged worktree bytes", async () => {
+    const repository = await createRepository();
+    const path = join(repository, "value.txt");
+    await writeFile(path, "base\n", "utf8");
+    await commitAll(repository, "initial");
+    await writeFile(path, "staged\n", "utf8");
+    await git(repository, ["add", "--", "value.txt"]);
+    await writeFile(path, "unstaged\n", "utf8");
+
+    const input = await captureLocalGitReviewInput({
+      repository,
+      staged: true,
+    });
+    const context = await collectReviewContext(input.snapshot, {
+      contentByPath: input.contentByPath,
+    });
+
+    expect(context.files).toContainEqual(
+      expect.objectContaining({ path: "value.txt", content: "staged\n" }),
     );
   });
 
@@ -161,6 +416,148 @@ describe("local Git input snapshots", () => {
       "other.txt",
       "value.txt",
     ]);
+  });
+
+  test("captures old commit and range bytes from their resolved head object", async () => {
+    const repository = await createRepository();
+    const path = join(repository, "value.txt");
+    await writeFile(path, "base\n", "utf8");
+    const first = await commitAll(repository, "first");
+    await writeFile(path, "target\n", "utf8");
+    const target = await commitAll(repository, "target");
+    await writeFile(path, "current head\n", "utf8");
+    await commitAll(repository, "current");
+
+    const inputs = await Promise.all([
+      captureLocalGitReviewInput({ repository, commit: target }),
+      captureLocalGitReviewInput({ repository, range: `${first}..${target}` }),
+    ]);
+    const contexts = await Promise.all(
+      inputs.map((input) =>
+        collectReviewContext(input.snapshot, {
+          contentByPath: input.contentByPath,
+        }),
+      ),
+    );
+
+    expect(contexts.map((context) => context.files[0]?.content)).toEqual([
+      "target\n",
+      "target\n",
+    ]);
+  });
+
+  test("rejects worktree replacement after snapshot enumeration", async () => {
+    const repository = await createRepository();
+    const path = join(repository, "value.txt");
+    await writeFile(path, "base\n", "utf8");
+    await commitAll(repository, "initial");
+    await writeFile(path, "captured candidate\n", "utf8");
+    const io: LocalGitInputIo = {
+      beforeContentCapture: async () =>
+        writeFile(path, "replacement\n", "utf8"),
+    };
+
+    await expect(
+      captureLocalGitReviewInput({ repository, worktree: true }, io),
+    ).rejects.toMatchObject({ code: "GIT_SOURCE_STALE" });
+  });
+
+  test("rejects same-byte inode replacement after snapshot enumeration", async () => {
+    const repository = await createRepository();
+    const path = join(repository, "value.txt");
+    await writeFile(path, "base\n", "utf8");
+    await commitAll(repository, "initial");
+    await writeFile(path, "candidate\n", "utf8");
+    const outside = await mkdtemp(join(tmpdir(), "cq-inode-replacement-"));
+    temporaryDirectories.push(outside);
+    const io: LocalGitInputIo = {
+      beforeContentCapture: async () => {
+        await rename(path, join(outside, "replaced-value.txt"));
+        await writeFile(path, "candidate\n", "utf8");
+      },
+    };
+
+    await expect(
+      captureLocalGitReviewInput({ repository, worktree: true }, io),
+    ).rejects.toMatchObject({ code: "GIT_SOURCE_STALE" });
+  });
+
+  test("rejects same-byte parent directory replacement", async () => {
+    const repository = await createRepository();
+    const directory = join(repository, "src");
+    await mkdir(directory);
+    const path = join(directory, "value.txt");
+    await writeFile(path, "base\n", "utf8");
+    await commitAll(repository, "initial");
+    await writeFile(path, "candidate\n", "utf8");
+    const outside = await mkdtemp(join(tmpdir(), "cq-parent-replacement-"));
+    temporaryDirectories.push(outside);
+    const io: LocalGitInputIo = {
+      beforeContentCapture: async () => {
+        await rename(directory, join(outside, "replaced-src"));
+        await mkdir(directory);
+        await writeFile(path, "candidate\n", "utf8");
+      },
+    };
+
+    await expect(
+      captureLocalGitReviewInput({ repository, worktree: true }, io),
+    ).rejects.toMatchObject({ code: "GIT_SOURCE_STALE" });
+  });
+
+  test("fails closed when a parent symlink points outside the repository", async () => {
+    const repository = await createRepository();
+    const outside = await mkdtemp(join(tmpdir(), "cq-external-sentinel-"));
+    temporaryDirectories.push(outside);
+    await writeFile(
+      join(outside, "sentinel.txt"),
+      "must not enter provider context\n",
+      "utf8",
+    );
+    await symlink(outside, join(repository, "linked"), "dir");
+    const snapshot = createReviewSnapshot({
+      inputKind: "worktree",
+      scope: "change",
+      repository,
+      head: "f".repeat(64),
+      files: [
+        {
+          path: "linked/sentinel.txt",
+          status: "modified",
+          binary: false,
+        },
+      ],
+      exclusions: [],
+      incomplete: false,
+    });
+    const capture = await captureContentEntries({
+      repository,
+      kind: "worktree",
+      files: snapshot.files,
+      execution: await resolveTrustedGitExecution(repository),
+    });
+    const normalizedSnapshot = createReviewSnapshot({
+      ...snapshot,
+      exclusions: capture.omissions,
+      incomplete: capture.omissions.length > 0,
+    });
+    const input = createImmutableReviewInput(
+      normalizedSnapshot,
+      capture.captured,
+    );
+
+    const context = await collectReviewContext(input.snapshot, {
+      contentByPath: input.contentByPath,
+    });
+
+    expect(input.contentByPath.has("linked/sentinel.txt")).toBe(false);
+    expect(input.snapshot.exclusions).toContainEqual({
+      path: "linked/sentinel.txt",
+      reason: "symlink",
+    });
+    expect(context.files).toEqual([]);
+    expect(context.exclusions).toEqual(["linked/sentinel.txt"]);
+    expect(context.incomplete).toBe(true);
   });
 
   test("rejects ambiguous selectors and invalid revisions", async () => {

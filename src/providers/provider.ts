@@ -66,6 +66,16 @@ export interface ProviderReviewResponse {
   readonly attemptsUsed: 1 | 2;
 }
 
+export interface ReviewProviderSession {
+  release(): Promise<void>;
+}
+
+export interface ReviewProviderSessionOptions {
+  readonly runId: string;
+  readonly signal: AbortSignal;
+  readonly deadline: number;
+}
+
 export type ProviderErrorCode =
   | "PROVIDER_CONFIG_INVALID"
   | "PROVIDER_TIMEOUT"
@@ -73,6 +83,7 @@ export type ProviderErrorCode =
   | "PROVIDER_RESPONSE_INVALID"
   | "PROVIDER_RESPONSE_TOO_LARGE"
   | "PROVIDER_NETWORK"
+  | "PROVIDER_CAPACITY"
   | "PROVIDER_UNSAFE"
   | "PROVIDER_FAILED";
 
@@ -89,6 +100,9 @@ export class ProviderError extends Error {
 export interface ReviewProvider {
   capabilities(): ProviderCapabilities;
   validateConfiguration(): Promise<readonly ProviderDiagnostic[]>;
+  openReviewSession?(
+    options: ReviewProviderSessionOptions,
+  ): Promise<ReviewProviderSession>;
   review(request: ProviderReviewRequest): Promise<ProviderReviewResponse>;
   redactDiagnostic(value: unknown): string;
 }
@@ -108,6 +122,7 @@ export interface HttpProviderConfig {
   readonly credentialEnv: string;
   readonly allowLoopbackHttp?: boolean;
   readonly fetchImpl?: typeof fetch;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export function freezeCapabilities(

@@ -2,13 +2,15 @@
 # >>> code-quality managed hook >>>
 # Installed by code-quality. Local hooks are bypassable and not server enforcement.
 CQ_HOOK_MODE=warn
+CQ_HOOK_PRESET=balanced
+CQ_HOOK_PHASE=pre-commit
+CQ_HOOK_FAIL_OPEN=1
 if ! command -v cq >/dev/null 2>&1; then
-  echo "code-quality: cq not found; skipping pre-commit" >&2
+  echo "code-quality: cq not found; fail-open skip for pre-commit" >&2
   exit 0
 fi
-output="$(cq review --staged --format terminal 2>&1)"
+cq hooks run pre-commit --mode "$CQ_HOOK_MODE" --preset "$CQ_HOOK_PRESET"
 status=$?
-echo "$output"
 if [ "$CQ_HOOK_MODE" = "warn" ]; then
   exit 0
 fi

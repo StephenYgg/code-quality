@@ -42,7 +42,7 @@ export function parseForgeUrl(input: string): ParsedForgeUrl {
     .filter(Boolean)
     .map(decodeURIComponent);
 
-  if (host === "github.com" || host.endsWith(".github.com")) {
+  if (host === "github.com") {
     if (segments.length !== 4 || segments[2] !== "pull") {
       throw new ForgeUrlError(
         "GitHub PR URL must look like /owner/repo/pull/123",
@@ -64,7 +64,7 @@ export function parseForgeUrl(input: string): ParsedForgeUrl {
     };
   }
 
-  if (host === "gitlab.com" || host.endsWith(".gitlab.com")) {
+  if (host === "gitlab.com") {
     const mergeIndex = segments.indexOf("merge_requests");
     if (mergeIndex < 2 || mergeIndex !== segments.length - 2) {
       throw new ForgeUrlError(

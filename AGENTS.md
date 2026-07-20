@@ -19,6 +19,7 @@
 - 同级文件只允许记录该 Agent 或工具独有、且无法放入 `AGENTS.md` 的增量要求。
 - 工具特定增量必须有明确标题，并且不得削弱、覆盖或绕过 `AGENTS.md`。
 - 如果一条工具特定规则后来适用于多个 Agent，必须迁回 `AGENTS.md`。
+-
 - 平台支持可靠 import 或符号链接时可以使用；否则使用最小指向文件。
 
 当前同级入口：
@@ -109,15 +110,15 @@
 
 ### 3.1 当前实现状态
 
-- 首版 CLI 主干已可运行并通过 `pnpm check`。
-- 确定性能力：`cq validate`、`cq rules list/explain`、`cq inspect readability`、`cq score`。
-- Git 输入：worktree/staged/commit/range 不可变快照；`cq review --repository --preflight` 与 `--confirm-full-repository <hash>`。
-- Provider 适配器：Codex CLI、Claude CLI、OpenAI-compatible、Anthropic-compatible（本地 fake CLI 与 loopback HTTP 测试）。
-- Review 编排：强制 stage、最多 7 stage、2 并发、finding 生命周期、gate、run 存储与 `cq report`/`cq runs`。
-- Forge：GitHub PR / GitLab MR URL 解析与只读 metadata 读取；publication helper 已有，完整线上发布仍需 harden。
-- 交付资产：`skills/code-quality-review`、hooks 安装/卸载、`templates/ci` 非激活模板、`check:secrets`/`check:dependencies`。
-- `CQ-READ-001..008` 仍主要产生确定性候选；模型候选必须经 verifier 才能 confirmed/BLOCK。
-- 不得把未实际存在的命令描述为可用能力；当前 README 与本段同步维护。
+- 口径说明：模块脚手架完成度 ≠ 首版设计可生产完成度。当前 19 项证据矩阵为 18 项 `Complete`、1 项 `Partial`，加权 **97.4%**；唯一 Partial 是本轮禁止访问外部服务时未运行 registry-backed dependency audit，见 `docs/PROGRESS.md`。
+- 当前发布 Gate 仍为 `INCOMPLETE`，不得把 97.4% 表述为生产环境已经签署。真实 Provider/Forge live soak、独立复核与 ops 开启 branch protection 仍需在对应授权环境完成。
+- 确定性基础：`cq validate`/`CQ-AGENT-001`、policy/score、readability AST 候选。
+- 本地 Git 快照、upstream range、full-repository preflight 可用。
+- Review 主路径：bounded context、single-flight（支持 `CQ_SHARED_*` 跨机共享目录）、egress、path-linked verifier、完整 100.0 `scoreFromReview`、可选 `--retain-transcript`。
+- Provider：四适配器 + 仓库外 config；`cq providers validate` / `--live` 与 forge token 只读探测。
+- Forge：bare cache/worktree 物化、base-policy 隔离、publish 幂等。
+- Hooks：balanced/strict、fail-open、pre-push upstream range、`cq hooks run`。
+- CI：模板 + `cq ci install --confirm` 安装路径；本仓库按设计不自动启用 workflow。
 
 ### 3.2 目标职责边界
 
@@ -400,19 +401,19 @@ Gate: PASS | WARN | BLOCK | INCOMPLETE
 
 ## 12. 文档路由
 
-| 主题 | 唯一详细来源 |
-|---|---|
-| 严重级别、finding、可信度、waiver | `docs/standards/severity-and-findings.md` |
-| 人类可读性、AST 信号、热点棘轮 | `docs/standards/readability.md` |
-| 通用门禁、架构、正确性、兼容、性能 | `docs/standards/universal-gates.md` |
-| 高并发、锁、去重、资源边界 | `docs/standards/concurrency.md` |
-| 安全、隐私、AI 与数据外发 | `docs/standards/security.md` |
-| 测试、覆盖率、自动化、Hook、CI | `docs/standards/testing-and-automation.md` |
-| 100 分大小项、权重、覆盖率、趋势 | `docs/standards/scoring.md` |
-| 标准审查执行流程 | `docs/playbooks/review-process.md` |
-| 基线、热点、事故和规则生命周期 | `docs/playbooks/continuous-improvement.md` |
-| 审查报告模板 | `templates/review-report.md` |
-| 首版 CLI 完整设计 | `docs/superpowers/specs/2026-07-19-code-quality-cli-design.md` |
+| 主题                               | 唯一详细来源                                                   |
+| ---------------------------------- | -------------------------------------------------------------- |
+| 严重级别、finding、可信度、waiver  | `docs/standards/severity-and-findings.md`                      |
+| 人类可读性、AST 信号、热点棘轮     | `docs/standards/readability.md`                                |
+| 通用门禁、架构、正确性、兼容、性能 | `docs/standards/universal-gates.md`                            |
+| 高并发、锁、去重、资源边界         | `docs/standards/concurrency.md`                                |
+| 安全、隐私、AI 与数据外发          | `docs/standards/security.md`                                   |
+| 测试、覆盖率、自动化、Hook、CI     | `docs/standards/testing-and-automation.md`                     |
+| 100 分大小项、权重、覆盖率、趋势   | `docs/standards/scoring.md`                                    |
+| 标准审查执行流程                   | `docs/playbooks/review-process.md`                             |
+| 基线、热点、事故和规则生命周期     | `docs/playbooks/continuous-improvement.md`                     |
+| 审查报告模板                       | `templates/review-report.md`                                   |
+| 首版 CLI 完整设计                  | `docs/superpowers/specs/2026-07-19-code-quality-cli-design.md` |
 
 找不到详细规则时，不在多个文件临时复制；先确定唯一 owner，再新增或更新。
 

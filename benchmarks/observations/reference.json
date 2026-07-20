@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1",
+  "provider": "human-reference",
+  "model": "labeled-ground-truth",
+  "observations": [
+    {
+      "id": "security-prompt-injection",
+      "reportedFindingIds": ["CQ-SEC-PROMPT-INJECTION"],
+      "repeatReportedFindingIds": [
+        ["CQ-SEC-PROMPT-INJECTION"],
+        ["CQ-SEC-PROMPT-INJECTION"]
+      ],
+      "latencyMs": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+    }
+  ]
+}

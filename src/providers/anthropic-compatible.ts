@@ -7,6 +7,7 @@ import {
   ProviderError,
 } from "./provider.js";
 import { HttpReviewProvider } from "./http.js";
+import { parseProviderUsage } from "./provider-usage.js";
 
 export class AnthropicCompatibleProvider extends HttpReviewProvider {
   constructor(config: Omit<HttpProviderConfig, "kind">) {
@@ -93,10 +94,7 @@ export class AnthropicCompatibleProvider extends HttpReviewProvider {
         readonly text?: string;
       }[];
       readonly stop_reason?: string;
-      readonly usage?: {
-        readonly input_tokens?: number;
-        readonly output_tokens?: number;
-      };
+      readonly usage?: unknown;
     };
     const text = (record.content ?? [])
       .filter(
@@ -119,16 +117,14 @@ export class AnthropicCompatibleProvider extends HttpReviewProvider {
         "Anthropic-compatible content is not schema JSON",
       );
     }
-    const input = record.usage?.input_tokens ?? 0;
-    const output = record.usage?.output_tokens ?? 0;
     const finish = record.stop_reason ?? "unknown";
     return {
       content,
-      usage: {
-        inputTokens: input,
-        outputTokens: output,
-        totalTokens: input + output,
-      },
+      usage: parseProviderUsage(record.usage, {
+        input: "input_tokens",
+        output: "output_tokens",
+        total: "total_tokens",
+      }),
       finishReason:
         finish === "max_tokens"
           ? "length"

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
 import {
+  createImmutableReviewInput,
+  type ImmutableReviewInput,
+} from "../core/review-input.js";
+import {
   createReviewSnapshot,
   decodeGitUtf8,
   parseGitSnapshotFiles,
@@ -16,6 +20,12 @@ import {
   type TrustedGitExecution,
 } from "./commands.js";
 import {
+  captureContentEntries,
+  captureWorktreeEpochs,
+  ContentCaptureError,
+  verifyWorktreeEpochs,
+} from "./content-capture.js";
+import {
   collectDiffMaterial,
   GitDiffError,
   hashCapturedMaterial,
@@ -30,6 +40,7 @@ import {
   resolveFirstParent,
   resolveGitRepository,
 } from "./repository.js";
+import type { WorktreePathEpoch } from "./safe-worktree-read.js";
 
 export type GitInputErrorCode =
   | "GIT_ABORTED"
@@ -64,6 +75,7 @@ export interface LocalGitInputRequest {
 }
 
 export interface LocalGitInputIo extends DiffCollectionIo {
+  readonly beforeContentCapture?: () => Promise<void>;
   readonly beforeSourceVerification?: () => Promise<void>;
 }
 
@@ -207,15 +219,20 @@ async function verifySource(
   }
 }
 
-function exclusionsOf(
+function filesOf(
+  plan: DiffPlan,
   material: CapturedMaterial,
-): readonly SnapshotExclusion[] {
-  return splitNullRecords(material.untracked ?? Buffer.alloc(0)).map(
+): readonly ReturnType<typeof parseGitSnapshotFiles>[number][] {
+  const tracked = parseGitSnapshotFiles(material.raw, material.numstat);
+  if (plan.kind !== "worktree") return tracked;
+  const untracked = splitNullRecords(material.untracked ?? Buffer.alloc(0)).map(
     (path) => ({
       path: decodeGitUtf8(path),
-      reason: "untracked",
+      status: "added" as const,
+      binary: false,
     }),
   );
+  return [...tracked, ...untracked];
 }
 
 function mapGitCommandErrorCode(
@@ -243,6 +260,9 @@ function mapGitCommandErrorCode(
 
 function normalizeError(error: unknown): never {
   if (error instanceof GitInputError) throw error;
+  if (error instanceof ContentCaptureError) {
+    throw new GitInputError(error.code, error.message);
+  }
   if (error instanceof GitDiffError) {
     throw new GitInputError(error.code, error.message);
   }
@@ -269,10 +289,56 @@ function normalizeError(error: unknown): never {
   );
 }
 
+interface CapturedReviewEpoch {
+  readonly snapshot: ReviewSnapshot;
+  readonly content: readonly (readonly [string, Buffer])[];
+}
+
+function snapshotFromMaterial(
+  repository: string,
+  plan: DiffPlan,
+  material: CapturedMaterial,
+  sourceHash: string,
+  files: readonly ReturnType<typeof parseGitSnapshotFiles>[number][],
+  exclusions: readonly SnapshotExclusion[],
+): ReviewSnapshot {
+  const syntheticHead = createHash("sha256")
+    .update(plan.kind)
+    .update(":")
+    .update(plan.resolvedHead)
+    .update(":")
+    .update(sourceHash)
+    .digest("hex");
+  return createReviewSnapshot({
+    inputKind: plan.kind,
+    scope: "change",
+    repository,
+    ...(plan.comparisonBase === undefined
+      ? {}
+      : { comparisonBase: plan.comparisonBase }),
+    head:
+      plan.kind === "commit" || plan.kind === "range"
+        ? plan.resolvedHead
+        : syntheticHead,
+    files: files.map((file) =>
+      exclusions.some(
+        (exclusion) =>
+          exclusion.path === file.path && exclusion.reason === "binary",
+      )
+        ? { ...file, binary: true }
+        : file,
+    ),
+    diff: decodeGitUtf8(material.patch),
+    exclusions,
+    incomplete: exclusions.length > 0,
+  });
+}
+
 async function capture(
   request: LocalGitInputRequest,
   io: LocalGitInputIo,
-): Promise<ReviewSnapshot> {
+  includeContent: boolean,
+): Promise<CapturedReviewEpoch> {
   const selector = parseSelector(request);
   const execution = await resolveTrustedGitExecution(request.repository);
   const repository = await resolveGitRepository(
@@ -294,6 +360,27 @@ async function capture(
     request.signal,
   );
   const sourceHash = hashCapturedMaterial(material);
+  const files = filesOf(plan, material);
+  let content: readonly (readonly [string, Buffer])[] = [];
+  let exclusions: readonly SnapshotExclusion[] = [];
+  let worktreeEpochByPath: ReadonlyMap<string, WorktreePathEpoch> | undefined;
+  if (includeContent) {
+    worktreeEpochByPath =
+      plan.kind === "worktree"
+        ? await captureWorktreeEpochs(repository, files)
+        : undefined;
+    await io.beforeContentCapture?.();
+    const captured = await captureContentEntries({
+      repository,
+      kind: plan.kind,
+      files,
+      execution,
+      ...(worktreeEpochByPath === undefined ? {} : { worktreeEpochByPath }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
+    content = captured.captured;
+    exclusions = captured.omissions;
+  }
   await io.beforeSourceVerification?.();
   await verifySource(
     repository,
@@ -303,31 +390,18 @@ async function capture(
     execution,
     request.signal,
   );
-  const exclusions =
-    plan.kind === "worktree" ? exclusionsOf(material) : ([] as const);
-  const syntheticHead = createHash("sha256")
-    .update(plan.kind)
-    .update(":")
-    .update(plan.resolvedHead)
-    .update(":")
-    .update(sourceHash)
-    .digest("hex");
-  return createReviewSnapshot({
-    inputKind: plan.kind,
-    scope: "change",
+  if (worktreeEpochByPath !== undefined) {
+    await verifyWorktreeEpochs(repository, worktreeEpochByPath);
+  }
+  const snapshot = snapshotFromMaterial(
     repository,
-    ...(plan.comparisonBase === undefined
-      ? {}
-      : { comparisonBase: plan.comparisonBase }),
-    head:
-      plan.kind === "commit" || plan.kind === "range"
-        ? plan.resolvedHead
-        : syntheticHead,
-    files: parseGitSnapshotFiles(material.raw, material.numstat),
-    diff: decodeGitUtf8(material.patch),
+    plan,
+    material,
+    sourceHash,
+    files,
     exclusions,
-    incomplete: exclusions.length > 0,
-  });
+  );
+  return { snapshot, content };
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -373,10 +447,11 @@ function raceWithSignal<T>(
   });
 }
 
-export async function captureLocalGitInput(
+async function captureWithDeadline(
   request: LocalGitInputRequest,
-  io: LocalGitInputIo = {},
-): Promise<ReviewSnapshot> {
+  io: LocalGitInputIo,
+  includeContent: boolean,
+): Promise<CapturedReviewEpoch> {
   const controller = new AbortController();
   const timeoutError = new GitInputError(
     "GIT_TIMEOUT",
@@ -406,7 +481,7 @@ export async function captureLocalGitInput(
   timeout.unref();
   try {
     return await raceWithSignal(
-      capture({ ...request, signal: controller.signal }, io),
+      capture({ ...request, signal: controller.signal }, io, includeContent),
       controller.signal,
     );
   } catch (error) {
@@ -416,4 +491,19 @@ export async function captureLocalGitInput(
     clearTimeout(timeout);
     request.signal?.removeEventListener("abort", onAbort);
   }
+}
+
+export async function captureLocalGitInput(
+  request: LocalGitInputRequest,
+  io: LocalGitInputIo = {},
+): Promise<ReviewSnapshot> {
+  return (await captureWithDeadline(request, io, false)).snapshot;
+}
+
+export async function captureLocalGitReviewInput(
+  request: LocalGitInputRequest,
+  io: LocalGitInputIo = {},
+): Promise<ImmutableReviewInput> {
+  const captured = await captureWithDeadline(request, io, true);
+  return createImmutableReviewInput(captured.snapshot, captured.content);
 }

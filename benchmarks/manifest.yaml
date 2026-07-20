@@ -1,8 +1,41 @@
 schemaVersion: 1
+versions:
+  prompt: cq-prompt-bundle/v4
+  rules: universal@1
 cases:
   - id: readability-large-function
     domain: readability
+    runner: readability
+    fixture: readability/large-function.ts
     expectedFindingIds: [CQ-READ-001]
-  - id: clean-small-module
+  - id: readability-wide-try
     domain: readability
+    runner: readability
+    fixture: readability/wide-try.ts
+    expectedFindingIds: [CQ-READ-001, CQ-READ-003, CQ-READ-008]
+  - id: readability-fallback-precedence
+    domain: readability
+    runner: readability
+    fixture: readability/fallback-precedence.ts
+    expectedFindingIds: [CQ-READ-004]
+  - id: readability-result-shapes
+    domain: readability
+    runner: readability
+    fixture: readability/result-shapes.ts
+    expectedFindingIds: [CQ-READ-005, CQ-READ-006]
+  - id: readability-implicit-state-machine
+    domain: readability
+    runner: readability
+    fixture: readability/implicit-state-machine.ts
+    expectedFindingIds: [CQ-READ-005]
+  - id: readability-clean-small-module
+    domain: readability
+    runner: readability
+    fixture: readability/clean-small-module.ts
     expectedFindingIds: []
+  - id: security-prompt-injection
+    domain: security
+    runner: external
+    fixture: security/prompt-injection.txt
+    expectedFindingIds: [CQ-SEC-PROMPT-INJECTION]
+    highSeverityFindingIds: [CQ-SEC-PROMPT-INJECTION]

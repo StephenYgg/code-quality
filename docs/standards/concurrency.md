@@ -105,18 +105,21 @@
 
 资源结论必须给出峰值数量、保留时间、内存或存储上限以及超限行为。无法估算输入规模和调用频率时，不得声称资源安全。
 
-## 本项目规划约束（尚未实现）
+## 本项目当前运行时约束
 
-以下是已确认设计对未来完整 `code-quality` / `cq` 审查运行时的约束，不代表当前已实现 Provider、Hook、缓存、锁或模型审查；当前只有 README 所列的只读 `cq validate` 增量：
+以下边界已经进入实现和自动化测试：
 
 - 第一版不运行 daemon、服务端或脱离当前进程的后台队列。
-- 完整审查的规划默认上限为 200 个变更文件、10,000 行变更、2 MiB 规范化 diff、七个审查阶段、两个并发 provider 请求、十六次总 provider 尝试、500,000 个总输入输出 token 和十五分钟墙钟时间。
+- 本地 selector 最多捕获 40 个文件、单文件 64 KiB、总计 512 KiB；full-repository preflight 最多 5,000 个文件、20,000 个目录项、50 MiB 总量和 1 MiB 单文件。
+- 完整审查最多七个阶段、两个并发 Provider 请求和十六次总尝试；fast preset 为一个 universal 阶段、一个并发和两次总尝试。有效 policy 只能继续收紧这些上限。
 - provider 工作满足 `峰值 provider 并发 <= 活跃审查数 x min(2, 可运行阶段数)`，单次审查总尝试不超过 16。
 - 快速 Hook 预设必须使用更低的文件、token、请求和时间预算；超限产生明确的 reduced-scope 或 incomplete 结果。
-- 运行和缓存写入采用原子创建与 rename；同一内容寻址审查键只有锁 winner 调用 provider，loser 有界等待或复用结果。
-- 本地 lease 只协调共享同一状态目录的进程，不声明跨机器 single-flight。未来 CI 若启用分布式 worker，必须先增加共享锁或 check-run 唯一身份。
+- 运行和缓存写入采用受限临时文件与原子 rename；同一内容寻址审查键只有本地主机锁 winner 调用 Provider，loser 最多 64 个、最多等待 60 秒，并支持取消。
+- 本地主机 lease 有 owner token、PID 活性判断与续租。共享路径只改变放置位置，不声明跨机器 single-flight；分布式 worker 必须先增加真实 fencing/CAS。
 - 发布使用 `forge + repository + change number + head SHA + report hash` 作为幂等身份，并在发布前复核 head；跨机器可重复计算，但不得重复创建外部评论。
-- 缓存必须配置容量和保留期并执行 LRU 清理；provider 限流和共享账号配额作为剩余风险报告。
+- 缓存最多 256 项、128 MiB、单项 8 MiB、保留七天，每次最多清理 32 项；run 最多 200 项、单项 16 MiB、每次最多清理 32 项。
+- 全局锁容器最多 1,024 个，每容器最多 128 个 artifact，每次 acquire 最多清理 32 个；超限显式返回 capacity/incomplete，而不是无界扫描。
+- Provider HTTP、子进程 stdout/stderr、schema、请求、响应、重试和总 deadline 都有硬上限；具体值进入 execution descriptor 和 cache identity。
 
 ## 标准输出
 

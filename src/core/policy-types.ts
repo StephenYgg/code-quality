@@ -78,6 +78,14 @@ export interface ScoreModelSelection {
   readonly minorWeights?: Readonly<Record<string, number>>;
 }
 
+export interface PolicyQualityCommand {
+  readonly label: string;
+  readonly argv: readonly string[];
+  readonly timeoutMs: number;
+  readonly maxStdoutBytes: number;
+  readonly maxStderrBytes: number;
+}
+
 export interface RuleOverride {
   readonly enabled?: boolean;
   readonly severity?: Severity;
@@ -100,6 +108,7 @@ export interface PolicyLayer {
   readonly scoreModel?: ScoreModelSelection;
   readonly criticalPaths?: readonly string[];
   readonly riskTriggers?: readonly string[];
+  readonly qualityCommands?: readonly PolicyQualityCommand[];
   readonly peerAgentDocuments?: readonly string[];
 }
 

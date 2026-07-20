@@ -6,7 +6,32 @@ import {
   type ProviderReviewResponse,
   ProviderError,
 } from "./provider.js";
-import { ProcessReviewProvider } from "./process-provider.js";
+import {
+  ProcessReviewProvider,
+  type ProcessProviderOutput,
+} from "./process-provider.js";
+import { CLAUDE_REQUIRED_FLAGS } from "./probe.js";
+import { parseProviderUsage } from "./provider-usage.js";
+
+interface ClaudeResponseEnvelope {
+  readonly result?: unknown;
+  readonly content?: unknown;
+  readonly structured_output?: unknown;
+  readonly is_error?: boolean;
+  readonly usage?: unknown;
+  readonly stop_reason?: string;
+  readonly session_id?: string;
+}
+
+function structuredContent(record: ClaudeResponseEnvelope): unknown {
+  if (record.structured_output !== undefined) return record.structured_output;
+  if (record.result !== undefined) return record.result;
+  if (record.content !== undefined) return record.content;
+  throw new ProviderError(
+    "PROVIDER_RESPONSE_INVALID",
+    "Claude provider response is missing structured content",
+  );
+}
 
 export class ClaudeCliProvider extends ProcessReviewProvider {
   constructor(config: Omit<ProcessProviderConfig, "kind">) {
@@ -26,14 +51,41 @@ export class ClaudeCliProvider extends ProcessReviewProvider {
     });
   }
 
+  protected requiredProbeFlags(): readonly string[] {
+    return CLAUDE_REQUIRED_FLAGS;
+  }
+
+  protected captureSessionEnvironment(): NodeJS.ProcessEnv {
+    const environment = super.captureSessionEnvironment();
+    if (process.env.HOME !== undefined) environment.HOME = process.env.HOME;
+    if (process.env.ANTHROPIC_API_KEY !== undefined) {
+      environment.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+    }
+    if (process.env.CLAUDE_CODE_OAUTH_TOKEN !== undefined) {
+      environment.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    }
+    if (process.env.CLAUDE_CONFIG_DIR !== undefined) {
+      environment.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+    }
+    return environment;
+  }
+
+  protected credentialSecrets(): readonly string[] {
+    return [
+      process.env.ANTHROPIC_API_KEY,
+      process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    ].filter((value): value is string => value !== undefined);
+  }
+
   protected buildArguments(
     request: ProviderReviewRequest,
     _workspace: string,
-    schemaPath: string,
+    _schemaPath: string,
+    schemaJson: string,
   ): readonly string[] {
     return [
       "--print",
-      "--bare",
+      "--safe-mode",
       "--tools",
       "",
       "--permission-mode",
@@ -41,7 +93,7 @@ export class ClaudeCliProvider extends ProcessReviewProvider {
       "--output-format",
       "json",
       "--json-schema",
-      schemaPath,
+      schemaJson,
       "--model",
       request.model,
       "--no-session-persistence",
@@ -49,12 +101,12 @@ export class ClaudeCliProvider extends ProcessReviewProvider {
   }
 
   protected parseResponse(
-    stdout: Buffer,
+    output: ProcessProviderOutput,
     request: ProviderReviewRequest,
   ): ProviderReviewResponse {
     let envelope: unknown;
     try {
-      envelope = JSON.parse(stdout.toString("utf8")) as unknown;
+      envelope = JSON.parse(output.stdout.toString("utf8")) as unknown;
     } catch {
       throw new ProviderError(
         "PROVIDER_RESPONSE_INVALID",
@@ -67,36 +119,30 @@ export class ClaudeCliProvider extends ProcessReviewProvider {
         "Claude provider response envelope is invalid",
       );
     }
-    const record = envelope as {
-      readonly result?: unknown;
-      readonly content?: unknown;
-      readonly usage?: {
-        readonly input_tokens?: number;
-        readonly output_tokens?: number;
-      };
-      readonly stop_reason?: string;
-      readonly session_id?: string;
-    };
-    const content = record.result ?? record.content;
-    if (content === undefined) {
+    const record = envelope as ClaudeResponseEnvelope;
+    if (record.is_error === true) {
       throw new ProviderError(
         "PROVIDER_RESPONSE_INVALID",
-        "Claude provider response is missing structured content",
+        "Claude provider reported an error response",
       );
     }
-    const input = record.usage?.input_tokens ?? 0;
-    const output = record.usage?.output_tokens ?? 0;
+    const content = structuredContent(record);
+    const truncated = record.stop_reason === "max_tokens";
+    let rawFinishReason: string | null = null;
+    if (record.stop_reason !== undefined) rawFinishReason = record.stop_reason;
+    let providerRequestId = request.runId;
+    if (record.session_id !== undefined) providerRequestId = record.session_id;
     return {
       content,
-      usage: {
-        inputTokens: input,
-        outputTokens: output,
-        totalTokens: input + output,
-      },
-      finishReason: record.stop_reason === "max_tokens" ? "length" : "stop",
-      rawFinishReason: record.stop_reason ?? null,
-      providerRequestId: record.session_id ?? request.runId,
-      truncated: record.stop_reason === "max_tokens",
+      usage: parseProviderUsage(record.usage, {
+        input: "input_tokens",
+        output: "output_tokens",
+        total: "total_tokens",
+      }),
+      finishReason: truncated ? "length" : "stop",
+      rawFinishReason,
+      providerRequestId,
+      truncated,
       attemptsUsed: 1,
     };
   }
